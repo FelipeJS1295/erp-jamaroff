@@ -1,0 +1,22 @@
+# Frontend (Next.js) del ERP. Corre con su propio usuario de Linux (erpjamaroff).
+# Instalar: sudo cp deploy/erp-jamaroff-web.service /etc/systemd/system/
+[Unit]
+Description=ERP Jamaroff - Web
+After=network.target erp-jamaroff-api.service
+
+[Service]
+Type=simple
+User=erpjamaroff
+Group=erpjamaroff
+WorkingDirectory=/home/erpjamaroff/erp-jamaroff/apps/web
+EnvironmentFile=/home/erpjamaroff/erp-jamaroff/.env
+ExecStart=/usr/bin/env sh -c 'exec node node_modules/next/dist/bin/next start -H 127.0.0.1 -p "$WEB_PORT"'
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/erpjamaroff/erp-jamaroff
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

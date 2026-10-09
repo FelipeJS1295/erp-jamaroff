@@ -1,0 +1,76 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791331495178,
+      "tag": "0000_overjoyed_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791334851207,
+      "tag": "0001_silky_kabuki",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791335928147,
+      "tag": "0002_abnormal_the_santerians",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791339585415,
+      "tag": "0003_lethal_frank_castle",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791343220168,
+      "tag": "0004_plain_stepford_cuckoos",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791391978245,
+      "tag": "0005_lovely_cannonball",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791398530034,
+      "tag": "0006_married_marten_broadcloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791400223338,
+      "tag": "0007_gifted_purple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791404533438,
+      "tag": "0008_ancient_jack_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791481130610,
+      "tag": "0009_shocking_killmonger",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "erp-retail",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @erp/shared build && pnpm --parallel --filter @erp/api --filter @erp/web dev",
+    "dev:api": "pnpm --filter @erp/api dev",
+    "dev:web": "pnpm --filter @erp/web dev",
+    "build": "pnpm -r build",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:generate": "pnpm --filter @erp/api db:generate",
+    "db:migrate": "pnpm --filter @erp/api db:migrate",
+    "db:studio": "pnpm --filter @erp/api db:studio"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}

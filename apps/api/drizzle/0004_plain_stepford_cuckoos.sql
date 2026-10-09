@@ -1,0 +1,1 @@
+ALTER TABLE "settlement_records" ADD COLUMN "channel" varchar(30);

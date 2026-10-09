@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+
+/* Paleta del ERP: neutra y sobria, con un acento azul petróleo */
+@theme {
+  --color-brand-50: #eef7f8;
+  --color-brand-100: #d5ebee;
+  --color-brand-500: #1f7a8c;
+  --color-brand-600: #18667a;
+  --color-brand-700: #145364;
+  --color-sidebar: #0f1d24;
+  --color-sidebar-muted: #8aa0aa;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}

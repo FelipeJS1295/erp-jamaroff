@@ -1,0 +1,23 @@
+# API (NestJS) del ERP. Corre con su propio usuario de Linux (erpjamaroff).
+# Instalar: sudo cp deploy/erp-jamaroff-api.service /etc/systemd/system/
+[Unit]
+Description=ERP Jamaroff - API
+After=network.target docker.service
+
+[Service]
+Type=simple
+User=erpjamaroff
+Group=erpjamaroff
+WorkingDirectory=/home/erpjamaroff/erp-jamaroff/apps/api
+EnvironmentFile=/home/erpjamaroff/erp-jamaroff/.env
+ExecStart=/usr/bin/env node dist/main.js
+Restart=always
+RestartSec=5
+# Seguridad: no puede escribir fuera de su carpeta
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/erpjamaroff/erp-jamaroff
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
