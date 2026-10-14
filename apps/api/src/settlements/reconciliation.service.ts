@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../database/database.module.js';
 import { PENALTY_GROUP_KEY, retailers } from '../database/schema/index.js';
+import { PurchasesService, type RowDocument } from '../purchases/purchases.service.js';
 
 export type ReconciliationStatus =
   | 'CONCILIADA'
@@ -47,6 +48,8 @@ export interface ReconciliationRow {
    * masterId/masterSku vienen si el producto ya tiene master, pero ese master no tiene costo.
    */
   missingProducts: { sellerSku: string | null; name: string | null; masterId: string | null; masterSku: string | null }[];
+  /** Documentos de compra (facturas del proveedor) agregados a esta orden */
+  documents: RowDocument[];
 }
 
 export interface ReconciliationResult {
@@ -130,7 +133,10 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 @Injectable()
 export class ReconciliationService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly purchases: PurchasesService,
+  ) {}
 
   /**
    * Cruza las ventas con los movimientos de liquidación de un retailer,
@@ -267,6 +273,7 @@ export class ReconciliationService {
         expected: null,
         result: null,
         missingProducts: (r.missing_products as ReconciliationRow['missingProducts'] | null) ?? [],
+        documents: [],
       };
       // Debíamos recibir: el "A recibir" de Productos, sin IVA
       if (row.expectedNet !== null) row.expected = Math.round(row.expectedNet);
@@ -377,6 +384,15 @@ export class ReconciliationService {
       if (row.reasons.length > 0) row.status = 'CON_DIFERENCIA';
       return row;
     });
+
+        // Documentos de compra de cada orden
+    const docs = await this.purchases.documentsByItem(
+      retailer.id,
+      result.map((r) => r.itemId).filter((k): k is string => k !== null),
+    );
+    for (const r of result) {
+      if (r.itemId !== null) r.documents = docs.get(r.itemId) ?? [];
+    }
 
     const summary: ReconciliationResult['summary'] = {
       CONCILIADA: 0,

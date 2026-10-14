@@ -72,6 +72,33 @@ export interface ReconciliationRow {
   /** Total = Neto − Debíamos recibir (positivo = ganancia, negativo = pérdida) */
   result: number | null;
   missingProducts: MissingCostProduct[];
+  /** Documentos de compra (facturas del proveedor) agregados a esta orden */
+  documents: RowDocument[];
+}
+
+/** Documento de compra ligado a una orden de la conciliación */
+export interface RowDocument {
+  lineId: string;
+  documentId: string;
+  documentNumber: string;
+  supplier: string;
+  /** Sin IVA */
+  amountNet: number;
+  /** Con IVA */
+  amountGross: number;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+}
+
+export interface NewPurchaseDocument {
+  supplier: string;
+  documentNumber: string;
+  /** Opción de conciliación elegida (ej: CENCOSUD, CENCOSUD_FULFILLMENT) */
+  retailerCode: string;
+  lines: { itemKey: string; orderNumber: string | null; productName: string | null; amountNet: string }[];
 }
 
 export interface MissingCostProduct {
@@ -429,6 +456,16 @@ export const api = {
     const qs = params.toString();
     return request<Dashboard>(`/reports/dashboard${qs ? `?${qs}` : ''}`);
   },
+
+    /** Documentos de compra (facturas del proveedor) */
+  suppliers: () => request<Supplier[]>('/purchases/suppliers'),
+  createPurchaseDocument: (data: NewPurchaseDocument) =>
+    request<{ documentId: string; supplier: string; documentNumber: string; lines: number }>(
+      '/purchases/documents',
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+  deletePurchaseLine: (lineId: string) =>
+    request<{ deleted: boolean; documentDeleted: boolean }>(`/purchases/lines/${lineId}`, { method: 'DELETE' }),
 
   /** Cruce de ventas vs liquidación de un retailer */
   reconcile: (retailerCode: string) =>

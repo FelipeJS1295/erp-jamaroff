@@ -71,6 +71,13 @@
       "when": 1791481130610,
       "tag": "0009_shocking_killmonger",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791948742260,
+      "tag": "0010_cheerful_bloodscream",
+      "breakpoints": true
     }
   ]
 }

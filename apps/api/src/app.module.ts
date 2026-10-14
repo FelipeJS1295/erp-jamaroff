@@ -9,6 +9,7 @@ import { SalesIngestionModule } from './sales-ingestion/sales-ingestion.module.j
 import { SalesModule } from './sales/sales.module.js';
 import { SettlementsModule } from './settlements/settlements.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
+import { PurchasesModule } from './purchases/purchases.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CatalogModule } from './catalog/catalog.module.js';
     AuthModule,
     HealthModule,
     ProductsModule,
+    PurchasesModule,
     ReportsModule,
     SalesIngestionModule,
     SalesIngestionModule,

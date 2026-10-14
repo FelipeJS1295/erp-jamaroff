@@ -12,3 +12,4 @@ export * from './settlements.js';
 export * from './products.js';
 export * from './catalog.js';
 export * from './users.js';
+export * from './purchases.js';
