@@ -92,7 +92,9 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
               )}
             </h2>
             <p className="text-xs text-slate-500">
-              {d ? `${d.supplier} · ingresada el ${dmy(d.createdAt)}` : 'Cargando…'}
+                {d
+                ? `${d.supplier} · cliente ${d.clients.join(', ') || '—'} · ingresada el ${dmy(d.createdAt)}`
+                : 'Cargando…'}
             </p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="Cerrar">

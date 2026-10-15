@@ -148,6 +148,8 @@ export interface PurchaseInvoice {
   supplierId: string;
   supplier: string;
   documentNumber: string;
+  /** Clientes (retailers) de las órdenes de la factura. Ej: ["Falabella"] */
+  clients: string[];
   /** Fecha en que se ingresó (AAAA-MM-DD) */
   createdAt: string;
   orders: number;

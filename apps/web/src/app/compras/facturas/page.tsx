@@ -25,6 +25,7 @@ export default function FacturasPage() {
   const invoices = useQuery({ queryKey: ['invoices'], queryFn: api.listInvoices });
   const [status, setStatus] = useState<StatusFilter>('open');
   const [supplierId, setSupplierId] = useState('');
+  const [client, setClient] = useState('');
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -44,6 +45,8 @@ export default function FacturasPage() {
     return [...map.values()].sort((a, b) => b.balance - a.balance || a.name.localeCompare(b.name));
   }, [all]);
 
+    // Clientes (retailers) que aparecen en las facturas
+  const clients = useMemo(() => [...new Set(all.flatMap((i) => i.clients))].sort(), [all]);
   const rows = useMemo(() => {
     const f = STATUS_FILTERS.find((x) => x.id === status)!;
     const q = search.trim().toLowerCase();
@@ -51,9 +54,10 @@ export default function FacturasPage() {
       (i) =>
         f.match(i) &&
         (!supplierId || i.supplierId === supplierId) &&
+        (!client || i.clients.includes(client)) &&
         (!q || i.documentNumber.toLowerCase().includes(q) || i.supplier.toLowerCase().includes(q)),
     );
-  }, [all, status, supplierId, search]);
+  }, [all, status, supplierId, client, search]);
 
   const totals = useMemo(
     () => ({
@@ -184,6 +188,16 @@ export default function FacturasPage() {
                 </option>
               ))}
             </select>
+                        <select
+              value={client}
+              onChange={(e) => setClient(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm"
+            >
+              <option value="">Todos los clientes</option>
+              {clients.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
             <label className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-400" />
               <input
@@ -206,6 +220,7 @@ export default function FacturasPage() {
                     <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-500">
                       <th className="px-3 py-2.5 font-medium">Proveedor</th>
                       <th className="px-3 py-2.5 font-medium">N° factura</th>
+                      <th className="px-3 py-2.5 font-medium">Cliente</th>
                       <th className="px-3 py-2.5 font-medium">Ingresada</th>
                       <th className="px-3 py-2.5 text-right font-medium">Órdenes</th>
                       <th className="border-l border-slate-200 px-3 py-2.5 text-right font-medium">Neto</th>

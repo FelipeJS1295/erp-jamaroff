@@ -16,6 +16,8 @@ export const VAT_RATE = 1.19;
 export interface NewDocumentInput {
   supplier: string;
   documentNumber: string;
+    /** Clientes (retailers) de las órdenes de la factura. Ej: ["Falabella"] */
+  clients: string[];
   /** Opción de conciliación (ej: CENCOSUD, CENCOSUD_FULFILLMENT, FALABELLA) */
   retailerCode: string;
   lines: { itemKey: string; orderNumber: string | null; productName: string | null; amountNet: string }[];
@@ -192,6 +194,8 @@ export class PurchasesService {
       supplier_id: string;
       supplier: string;
       document_number: string;
+      client_codes: string[] | null;
+      client_names: string[] | null;
       created_at: string;
       orders: number;
       net: number;
@@ -202,6 +206,7 @@ export class PurchasesService {
       select
         d.id, d.supplier_id, s.name as supplier, d.document_number,
         (d.created_at at time zone 'America/Santiago')::date::text as created_at,
+        l.client_codes, l.client_names,
         coalesce(l.orders, 0)::int as orders,
         coalesce(l.net, 0)::float8 as net,
         coalesce(l.total, 0)::float8 as total,
@@ -210,10 +215,15 @@ export class PurchasesService {
       from purchase_documents d
       join suppliers s on s.id = d.supplier_id
       left join lateral (
-        select count(*) as orders, sum(amount_net) as net,
+          select count(*) as orders, sum(amount_net) as net,
+          -- Cliente = retailer de las órdenes de la factura
+          array_agg(distinct r.code) as client_codes,
+          array_agg(distinct r.name) as client_names,
           -- con IVA por línea, redondeado igual que en la conciliación
           sum(round(amount_net * ${sql.raw(String(VAT_RATE))})) as total
-        from purchase_document_lines where document_id = d.id
+        from purchase_document_lines pl
+        join retailers r on r.id = pl.retailer_id
+        where pl.document_id = d.id
       ) l on true
       left join lateral (
         select sum(amount) as paid, max(paid_at) as last_payment_at
@@ -231,6 +241,7 @@ export class PurchasesService {
         supplierId: r.supplier_id,
         supplier: r.supplier,
         documentNumber: r.document_number,
+        clients: (r.client_codes ?? []).map((code, i) => RETAILER_LABELS[code] ?? r.client_names?.[i] ?? code),
         createdAt: r.created_at,
         orders: r.orders,
         net,
