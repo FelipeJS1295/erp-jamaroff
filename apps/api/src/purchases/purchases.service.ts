@@ -16,8 +16,6 @@ export const VAT_RATE = 1.19;
 export interface NewDocumentInput {
   supplier: string;
   documentNumber: string;
-    /** Clientes (retailers) de las órdenes de la factura. Ej: ["Falabella"] */
-  clients: string[];
   /** Opción de conciliación (ej: CENCOSUD, CENCOSUD_FULFILLMENT, FALABELLA) */
   retailerCode: string;
   lines: { itemKey: string; orderNumber: string | null; productName: string | null; amountNet: string }[];
@@ -39,6 +37,8 @@ export interface PurchaseInvoice {
   supplierId: string;
   supplier: string;
   documentNumber: string;
+  /** Clientes (retailers) de las órdenes de la factura. Ej: ["Falabella"] */
+  clients: string[];
   /** Fecha en que se ingresó (AAAA-MM-DD) */
   createdAt: string;
   orders: number;
