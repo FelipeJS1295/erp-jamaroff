@@ -30,6 +30,8 @@ export interface ReconciliationRow {
   commissionPct: number | null;
   /** Envío, logística y otros cargos (suma, puede ser negativa) */
   otherCharges: number | null;
+  /** Cobros de envío y logística (negativos, con IVA): su IVA es crédito fiscal */
+  shippingCharges: number | null;
   /** Neto que paga el retailer por esta venta (suma de todos los movimientos) */
   net: number | null;
   paymentStatus: string | null;
@@ -225,6 +227,7 @@ export class ReconciliationService {
           sum(amount_gross) filter (where kind = 'COMMISSION') as commission,
           max(commission_pct) filter (where kind = 'COMMISSION') as commission_pct,
           sum(amount_gross) filter (where kind not in ('PRODUCT_PAYMENT', 'COMMISSION')) as other_charges,
+          sum(amount_gross) filter (where kind in ('SHIPPING', 'LOGISTICS') and amount_gross < 0) as shipping_charges,
           sum(amount_gross) as net,
           count(*) filter (where kind = 'PENALTY') as penalties,
           string_agg(distinct payment_status, ', ') as payment_status,
@@ -246,6 +249,7 @@ export class ReconciliationService {
         v.sale_price,
         v.expected_net, v.missing_cost, v.missing_products,
         s.product_paid, s.returns, s.commission, s.commission_pct, s.other_charges, s.net, s.penalties,
+        s.product_paid, s.returns, s.commission, s.commission_pct, s.other_charges, s.shipping_charges, s.net, s.penalties,
         s.payment_status, s.statement_number
       from v
       full outer join s on s.sale_item_id = v.match_key
@@ -266,6 +270,7 @@ export class ReconciliationService {
         commission: num(r.commission),
         commissionPct: num(r.commission_pct),
         otherCharges: num(r.other_charges),
+        shippingCharges: num(r.shipping_charges),
         net: num(r.net),
         paymentStatus: r.payment_status as string | null,
         statementNumber: r.statement_number as string | null,

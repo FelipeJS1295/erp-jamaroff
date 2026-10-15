@@ -66,6 +66,35 @@ export const purchaseDocumentLines = pgTable(
   ],
 );
 
+
+/**
+ * Boleta emitida al cliente final por una orden (producto + envío).
+ * Una por orden; su IVA es el IVA débito de la venta.
+ */
+export const customerReceipts = pgTable(
+  'customer_receipts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    retailerId: uuid('retailer_id')
+      .notNull()
+      .references(() => retailers.id),
+    orderNumber: varchar('order_number', { length: 50 }).notNull(),
+    /** N° de la boleta */
+    receiptNumber: varchar('receipt_number', { length: 50 }).notNull(),
+    /** Total de la boleta, con IVA */
+    totalGross: numeric('total_gross', { precision: 14, scale: 2 }).notNull(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex('customer_receipts_order_uq').on(t.retailerId, t.orderNumber)],
+);
+
+export type CustomerReceipt = typeof customerReceipts.$inferSelect;
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type PurchaseDocument = typeof purchaseDocuments.$inferSelect;
 export type PurchaseDocumentLine = typeof purchaseDocumentLines.$inferSelect;

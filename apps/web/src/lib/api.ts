@@ -21,10 +21,12 @@ export interface ImportResult {
 /**
  * Una venta (orden) con su resultado:
  *   Total = Liquidación − Proveedor (con IVA) − IVA
- *   IVA   = IVA de la venta − IVA de la compra − IVA de la comisión
+ *   IVA   = IVA de la venta (boleta) − IVA de la compra − IVA de la comisión − IVA del envío
  */
 export interface SaleRow {
   key: string;
+  /** Código del retailer (para guardar la boleta) */
+  retailerCode: string;
   retailer: string;
   orderNumber: string | null;
   /** AAAA-MM-DD */
@@ -34,18 +36,23 @@ export interface SaleRow {
   /** Estado de la orden tal como lo informa el retailer */
   status: string | null;
   cancelled: boolean;
-  /** Lo que pagó el cliente (con IVA) */
+  /** Lo que pagó el cliente por el producto (con IVA) */
   salePrice: number | null;
+  /** Boleta al cliente final (producto + envío, con IVA) */
+  receipt: { id: string; number: string; totalGross: number } | null;
   /** Neto pagado por el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
   /** Comisión cobrada (negativa, con IVA) */
   commission: number | null;
+  /** Cargos de envío y logística (negativos, con IVA) */
+  shippingCharges: number | null;
   /** Factura del proveedor con IVA / sin IVA. null = sin factura */
   supplierGross: number | null;
   supplierNet: number | null;
   vatSale: number | null;
   vatPurchase: number;
   vatCommission: number;
+  vatShipping: number;
   /** IVA a pagar */
   vat: number | null;
   /** null hasta tener liquidación y factura */
@@ -391,6 +398,11 @@ export const api = {
 
   /** Ventas cargadas (las más recientes primero) */
   listSales: () => request<SaleRow[]>('/sales'),
+
+  /** Boleta al cliente final de una orden (si ya tiene, se reemplaza) */
+  saveReceipt: (data: { retailerCode: string; orderNumber: string; receiptNumber: string; totalGross: string }) =>
+    request<{ id: string }>('/sales/receipts', { method: 'POST', body: JSON.stringify(data) }),
+  deleteReceipt: (id: string) => request<{ deleted: boolean }>(`/sales/receipts/${id}`, { method: 'DELETE' }),
 
   /** Retailers cuyos archivos de ventas se pueden cargar */
   importRetailers: () => request<ImportRetailer[]>('/sales/import/retailers'),

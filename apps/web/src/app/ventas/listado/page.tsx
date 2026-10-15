@@ -1,9 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, RefreshCw, Search } from 'lucide-react';
+import { Loader2, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useAuth } from '@/components/auth';
+import { ReceiptDialog } from '@/components/receipt-dialog';
 import { api, type SaleRow } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -20,19 +22,22 @@ function clp(n: number | null) {
   return n < 0 ? `-${abs}` : abs;
 }
 
-type Filter = 'all' | 'done' | 'noSettlement' | 'noInvoice';
+type Filter = 'all' | 'done' | 'noSettlement' | 'noInvoice' | 'noReceipt';
 
 const FILTERS: { id: Filter; label: string; match: (s: SaleRow) => boolean }[] = [
   { id: 'all', label: 'Todas', match: () => true },
   { id: 'done', label: 'Con resultado', match: (s) => s.total !== null },
   { id: 'noSettlement', label: 'Falta liquidación', match: (s) => !s.cancelled && s.settlementNet === null },
   { id: 'noInvoice', label: 'Falta factura', match: (s) => !s.cancelled && s.supplierGross === null },
+  { id: 'noReceipt', label: 'Falta boleta', match: (s) => !s.cancelled && s.receipt === null },
 ];
 
 export default function VerVentasPage() {
   const sales = useQuery({ queryKey: ['sales'], queryFn: api.listSales });
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+  // Orden a la que se le está agregando/editando la boleta
+  const [receiptFor, setReceiptFor] = useState<SaleRow | null>(null);
 
   const rows = useMemo(() => {
     const f = FILTERS.find((x) => x.id === filter)!;
@@ -99,7 +104,8 @@ export default function VerVentasPage() {
             <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
               Suma de {summary.count === 1 ? 'la orden' : `las ${summary.count.toLocaleString('es-CL')} órdenes`} con
               resultado (que ya tienen liquidación y factura del proveedor). Total = Liquidación − Proveedor − IVA. IVA = IVA
-              de la venta − IVA de la compra − IVA de la comisión.
+              de la boleta (o del precio, si aún no hay boleta) − IVA de la compra − IVA de la comisión − IVA de los
+              cargos de envío.
             </p>
           </section>
 
@@ -167,6 +173,9 @@ export default function VerVentasPage() {
                   <th className="border-l border-slate-200 px-3 py-2.5 text-right font-medium" title="Lo que pagó el cliente, con IVA">
                     Venta
                   </th>
+                  <th className="px-3 py-2.5 font-medium" title="Boleta al cliente final: producto + envío, con IVA">
+                    Boleta
+                  </th>
                   <th className="px-3 py-2.5 text-right font-medium" title="Neto que pagó el retailer en la liquidación">
                     Liquidación
                   </th>
@@ -175,7 +184,7 @@ export default function VerVentasPage() {
                   </th>
                   <th
                     className="px-3 py-2.5 text-right font-medium"
-                    title="IVA de la venta − IVA de la compra − IVA de la comisión"
+                    title="IVA de la boleta − IVA de la compra − IVA de la comisión − IVA del envío"
                   >
                     IVA
                   </th>
@@ -186,13 +195,15 @@ export default function VerVentasPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((s) => (
-                  <SaleLine key={s.key} s={s} />
+                  <SaleLine key={s.key} s={s} onReceipt={() => setReceiptFor(s)} />
                 ))}
               </tbody>
             </table>
           </div>
         )}
       </section>
+      {receiptFor && <ReceiptDialog sale={receiptFor} onClose={() => setReceiptFor(null)} />}
+
       {sales.data && sales.data.length >= 500 && (
         <p className="mt-2 text-xs text-slate-400">Se muestran las 500 órdenes más recientes.</p>
       )}
@@ -200,7 +211,8 @@ export default function VerVentasPage() {
   );
 }
 
-function SaleLine({ s }: { s: SaleRow }) {
+function SaleLine({ s, onReceipt }: { s: SaleRow; onReceipt: () => void }) {
+  const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
     <tr className={cn('align-top hover:bg-slate-50', s.cancelled && 'text-slate-400')}>
@@ -231,6 +243,33 @@ function SaleLine({ s }: { s: SaleRow }) {
       {/* Montos */}
       <td className="border-l border-slate-100 px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
         {s.cancelled ? muted : clp(s.salePrice)}
+      </td>
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        {s.receipt ? (
+          <button
+            onClick={canEdit ? onReceipt : undefined}
+            disabled={!canEdit}
+            title={canEdit ? 'Editar boleta' : undefined}
+            className="group/receipt text-left disabled:cursor-default"
+          >
+            <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-medium text-slate-700">
+              N° {s.receipt.number}
+              {canEdit && <Pencil className="hidden size-3 text-slate-400 group-hover/receipt:inline" />}
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)}</span>
+          </button>
+        ) : s.cancelled || !s.orderNumber ? (
+          muted
+        ) : canEdit ? (
+          <button
+            onClick={onReceipt}
+            className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:border-brand-500 hover:text-brand-600"
+          >
+            <Plus className="size-3" /> Agregar
+          </button>
+        ) : (
+          <span className="text-xs text-slate-400">Sin boleta</span>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
         {s.settlementNet !== null ? (
@@ -269,9 +308,10 @@ function SaleLine({ s }: { s: SaleRow }) {
           <span
             className="cursor-help border-b border-dotted border-slate-300"
             title={[
-              `IVA venta: ${clp(s.vatSale)}`,
+              `IVA venta${s.receipt ? ' (boleta)' : ' (precio, sin boleta)'}: ${clp(s.vatSale)}`,
               `− IVA compra: ${clp(s.vatPurchase)}`,
               `− IVA comisión: ${clp(s.vatCommission)}`,
+              `− IVA envío: ${clp(s.vatShipping)}`,
               `= IVA a pagar: ${clp(s.vat)}`,
             ].join('\n')}
           >
