@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import { CurrentUser, type SessionUser } from '../auth/decorators.js';
 import { validate } from '../products/catalog.validation.js';
@@ -49,6 +49,13 @@ export class SalesController {
   @Get()
   list() {
     return this.sales.listWithMargin();
+  }
+
+  /** Datos del cliente de una orden, para hacer la boleta o factura en el SII */
+  @Get('customer')
+  customer(@Query('retailer') retailer?: string, @Query('order') order?: string) {
+    if (!retailer || !order) throw new BadRequestException('Faltan el retailer y la orden');
+    return this.sales.customerData(retailer, order);
   }
 
   @Post('receipts')

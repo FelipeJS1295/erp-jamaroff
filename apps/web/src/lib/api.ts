@@ -18,6 +18,24 @@ export interface ImportResult {
   errors: { row: number; message: string }[];
 }
 
+/** Datos para emitir la boleta o factura de una orden en el SII */
+export interface CustomerData {
+  orderNumber: string;
+  documentType: 'BOLETA' | 'FACTURA';
+  customer: { name: string | null; rut: string | null; email: string | null };
+  shipping: { name: string | null; address: string | null; commune: string | null; region: string | null };
+  /** Solo si el cliente pidió factura */
+  billing: { legalName: string | null; rut: string | null; activity: string | null; address: string | null } | null;
+  lines: { productName: string | null; quantity: number; amountGross: number; amountNet: number }[];
+  /** Con IVA */
+  productTotal: number;
+  shippingTotal: number;
+  /** Producto + envío, con IVA */
+  total: number;
+  totalNet: number;
+  totalVat: number;
+}
+
 /**
  * Una venta (orden) con su resultado:
  *   Total = Liquidación − Proveedor (con IVA) − IVA
@@ -401,6 +419,12 @@ export const api = {
 
   /** Ventas cargadas (las más recientes primero) */
   listSales: () => request<SaleRow[]>('/sales'),
+
+    /** Datos del cliente de una orden (para la boleta o factura del SII) */
+  customerData: (retailerCode: string, orderNumber: string) =>
+    request<CustomerData>(
+      `/sales/customer?retailer=${encodeURIComponent(retailerCode)}&order=${encodeURIComponent(orderNumber)}`,
+    ),
 
   /** Boleta al cliente final de una orden (si ya tiene, se reemplaza) */
   saveReceipt: (data: { retailerCode: string; orderNumber: string; receiptNumber: string; totalGross: string }) =>

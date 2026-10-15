@@ -1,10 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import { Eye, Loader2, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/components/auth';
+import { CustomerDataDialog } from '@/components/customer-data-dialog';
 import { ReceiptDialog } from '@/components/receipt-dialog';
 import { api, type SaleRow } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -38,6 +39,9 @@ export default function VerVentasPage() {
   const [search, setSearch] = useState('');
   // Orden a la que se le está agregando/editando la boleta
   const [receiptFor, setReceiptFor] = useState<SaleRow | null>(null);
+
+    // Orden de la que se están viendo los datos del cliente
+  const [customerFor, setCustomerFor] = useState<SaleRow | null>(null);
 
   const rows = useMemo(() => {
     const f = FILTERS.find((x) => x.id === filter)!;
@@ -195,7 +199,12 @@ export default function VerVentasPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((s) => (
-                  <SaleLine key={s.key} s={s} onReceipt={() => setReceiptFor(s)} />
+                  <SaleLine
+                    key={s.key}
+                    s={s}
+                    onReceipt={() => setReceiptFor(s)}
+                    onCustomer={() => setCustomerFor(s)}
+                  />
                 ))}
               </tbody>
             </table>
@@ -203,6 +212,7 @@ export default function VerVentasPage() {
         )}
       </section>
       {receiptFor && <ReceiptDialog sale={receiptFor} onClose={() => setReceiptFor(null)} />}
+      {customerFor && <CustomerDataDialog sale={customerFor} onClose={() => setCustomerFor(null)} />}
 
       {sales.data && sales.data.length >= 500 && (
         <p className="mt-2 text-xs text-slate-400">Se muestran las 500 órdenes más recientes.</p>
@@ -211,7 +221,8 @@ export default function VerVentasPage() {
   );
 }
 
-function SaleLine({ s, onReceipt }: { s: SaleRow; onReceipt: () => void }) {
+function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => void }) {
+  const { s, onReceipt, onCustomer } = props;
   const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
@@ -225,19 +236,36 @@ function SaleLine({ s, onReceipt }: { s: SaleRow; onReceipt: () => void }) {
         )}
       </td>
       <td className="max-w-64 px-3 py-2.5 text-slate-700">{s.productName ?? '—'}</td>
-      <td className="px-3 py-2.5 whitespace-nowrap">
-        {s.status ? (
-          <span
-            className={cn(
-              'rounded-full px-2 py-0.5 text-xs',
-              s.cancelled ? 'bg-zinc-100 text-zinc-500 line-through' : 'bg-slate-100 text-slate-700',
-            )}
-          >
-            {s.status}
-          </span>
-        ) : (
-          '—'
-        )}
+            <td className="px-3 py-2.5 whitespace-nowrap">
+        <div className="flex items-start gap-1.5">
+          {s.receipt && (
+            <button
+              onClick={canEdit ? onReceipt : undefined}
+              disabled={!canEdit}
+              title={canEdit ? 'Editar boleta' : undefined}
+              className="group/receipt mr-1 text-left disabled:cursor-default"
+            >
+              <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-medium text-slate-700">
+                N° {s.receipt.number}
+                {canEdit && <Pencil className="hidden size-3 text-slate-400 group-hover/receipt:inline" />}
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)}</span>
+            </button>
+          )}
+          {!s.cancelled && s.orderNumber && (
+            <>
+              <IconButton title="Ver datos del cliente para la boleta o factura" onClick={onCustomer}>
+                <Eye className="size-4" />
+              </IconButton>
+              {canEdit && !s.receipt && (
+                <IconButton title="Agregar boleta" onClick={onReceipt}>
+                  <Plus className="size-4" />
+                </IconButton>
+              )}
+            </>
+          )}
+          {(s.cancelled || !s.orderNumber) && !s.receipt && muted}
+        </div>
       </td>
 
       {/* Montos */}
@@ -345,6 +373,19 @@ function SaleLine({ s, onReceipt }: { s: SaleRow; onReceipt: () => void }) {
         )}
       </td>
     </tr>
+  );
+}
+
+function IconButton(props: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={props.onClick}
+      title={props.title}
+      aria-label={props.title}
+      className="grid size-7 place-items-center rounded-md border border-slate-200 text-slate-500 hover:border-brand-500 hover:bg-brand-50 hover:text-brand-600"
+    >
+      {props.children}
+    </button>
   );
 }
 

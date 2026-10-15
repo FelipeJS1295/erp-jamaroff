@@ -56,6 +56,25 @@ export interface SaleWithMargin {
   marginPct: number | null;
 }
 
+/** Datos para emitir la boleta o factura de una orden en el SII */
+export interface CustomerData {
+  orderNumber: string;
+  documentType: 'BOLETA' | 'FACTURA';
+  customer: { name: string | null; rut: string | null; email: string | null };
+  shipping: { name: string | null; address: string | null; commune: string | null; region: string | null };
+  /** Solo si el cliente pidió factura */
+  billing: { legalName: string | null; rut: string | null; activity: string | null; address: string | null } | null;
+  /** Productos de la orden (con IVA y neto) */
+  lines: { productName: string | null; quantity: number; amountGross: number; amountNet: number }[];
+  /** Con IVA */
+  productTotal: number;
+  shippingTotal: number;
+  /** Producto + envío, con IVA */
+  total: number;
+  totalNet: number;
+  totalVat: number;
+}
+
 type SaleGroup = {
   retailer_code: string;
   retailer_name: string;
@@ -182,6 +201,93 @@ export class SalesService {
   }
 
   /**
+   * Datos del cliente de una orden, para emitir la boleta o factura en el SII.
+   * Montos con IVA (Walmart informa netos: se les suma el IVA).
+   */
+  async customerData(retailerCode: string, orderNumber: string): Promise<CustomerData> {
+    const { rows } = await this.db.execute<{
+      product_name: string | null;
+      quantity: number;
+      amount: number;
+      shipping: number;
+      document_type: string | null;
+      customer_name: string | null;
+      customer_document: string | null;
+      customer_email: string | null;
+      shipping_name: string | null;
+      shipping_address: string | null;
+      shipping_commune: string | null;
+      shipping_region: string | null;
+      billing_legal_name: string | null;
+      billing_tax_id: string | null;
+      billing_activity: string | null;
+      billing_address: string | null;
+    }>(sql`
+      select
+        s.product_name,
+        s.quantity,
+        (coalesce(s.paid_price, s.unit_price, 0) * s.quantity
+          * case when s.amounts_include_tax then 1 else ${sql.raw(String(VAT_RATE))} end)::float8 as amount,
+        (coalesce(s.shipping_cost, 0)
+          * case when s.amounts_include_tax then 1 else ${sql.raw(String(VAT_RATE))} end)::float8 as shipping,
+        s.document_type, s.customer_name, s.customer_document, s.customer_email,
+        s.shipping_name, s.shipping_address, s.shipping_commune, s.shipping_region,
+        s.billing_legal_name, s.billing_tax_id, s.billing_activity, s.billing_address
+      from sales_records s
+      join retailers r on r.id = s.retailer_id
+      where r.code = ${retailerCode.toUpperCase()} and s.order_number = ${orderNumber}
+        and coalesce(s.status, '') !~* 'cancel|anulad'
+      order by s.external_item_id
+    `);
+    if (rows.length === 0) throw new NotFoundException('No se encontró la orden');
+
+    // Datos del cliente: el primer valor no vacío de las líneas de la orden
+    const first = <K extends keyof (typeof rows)[number]>(k: K) =>
+      rows.map((r) => r[k]).find((v) => v !== null && v !== '') ?? null;
+
+    const billingTaxId = first('billing_tax_id') as string | null;
+    const docType = String(first('document_type') ?? '').toUpperCase();
+    const productTotal = Math.round(rows.reduce((n, r) => n + r.amount, 0));
+    const shippingTotal = Math.round(rows.reduce((n, r) => n + r.shipping, 0));
+    const total = productTotal + shippingTotal;
+
+    return {
+      orderNumber,
+      documentType: docType.includes('FACTURA') || billingTaxId ? 'FACTURA' : 'BOLETA',
+      customer: {
+        name: first('customer_name') as string | null,
+        rut: formatRut(first('customer_document') as string | null),
+        email: first('customer_email') as string | null,
+      },
+      shipping: {
+        name: first('shipping_name') as string | null,
+        address: first('shipping_address') as string | null,
+        commune: first('shipping_commune') as string | null,
+        region: first('shipping_region') as string | null,
+      },
+      billing: billingTaxId
+        ? {
+            legalName: first('billing_legal_name') as string | null,
+            rut: formatRut(billingTaxId),
+            activity: first('billing_activity') as string | null,
+            address: first('billing_address') as string | null,
+          }
+        : null,
+      lines: rows.map((r) => ({
+        productName: r.product_name,
+        quantity: r.quantity,
+        amountGross: Math.round(r.amount),
+        amountNet: Math.round(r.amount / VAT_RATE),
+      })),
+      productTotal,
+      shippingTotal,
+      total,
+      totalNet: Math.round(total / VAT_RATE),
+      totalVat: total - Math.round(total / VAT_RATE),
+    };
+  }
+
+  /**
    * Boleta al cliente final: una por orden. Si ya existe, se reemplaza.
    */
   async saveReceipt(
@@ -264,6 +370,16 @@ export class SalesService {
     }
     return map;
   }
+}
+
+/** "17396420K" -> "17.396.420-K" (si no parece RUT, se deja como viene) */
+function formatRut(value: string | null): string | null {
+  if (!value) return null;
+  const clean = value.replace(/[^0-9kK]/g, '').toUpperCase();
+  if (clean.length < 2 || !/^\d+[0-9K]$/.test(clean)) return value.trim();
+  const body = clean.slice(0, -1);
+  const dv = clean.slice(-1);
+  return `${body.replace(/\B(?=(\d{3})+(?!\d))/g, '.')}-${dv}`;
 }
 
 const round = (n: number | null) => (n === null ? null : Math.round(n));
