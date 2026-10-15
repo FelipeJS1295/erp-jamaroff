@@ -18,16 +18,40 @@ export interface ImportResult {
   errors: { row: number; message: string }[];
 }
 
+/**
+ * Una venta (orden) con su resultado:
+ *   Total = Liquidación − Proveedor (con IVA) − IVA
+ *   IVA   = IVA de la venta − IVA de la compra − IVA de la comisión
+ */
 export interface SaleRow {
-  id: string;
+  key: string;
   retailer: string;
   orderNumber: string | null;
-  /** Fecha en formato AAAA-MM-DD (se muestra como DD/MM/AAAA) */
+  /** AAAA-MM-DD */
   orderDate: string | null;
   dispatchDeadline: string | null;
   productName: string | null;
-  carrier: string | null;
+  /** Estado de la orden tal como lo informa el retailer */
   status: string | null;
+  cancelled: boolean;
+  /** Lo que pagó el cliente (con IVA) */
+  salePrice: number | null;
+  /** Neto pagado por el retailer en la liquidación. null = aún no paga */
+  settlementNet: number | null;
+  /** Comisión cobrada (negativa, con IVA) */
+  commission: number | null;
+  /** Factura del proveedor con IVA / sin IVA. null = sin factura */
+  supplierGross: number | null;
+  supplierNet: number | null;
+  vatSale: number | null;
+  vatPurchase: number;
+  vatCommission: number;
+  /** IVA a pagar */
+  vat: number | null;
+  /** null hasta tener liquidación y factura */
+  total: number | null;
+  /** Total / precio de venta (%) */
+  marginPct: number | null;
 }
 
 export interface SettlementImportResult {
