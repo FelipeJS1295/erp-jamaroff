@@ -51,6 +51,7 @@ export default function VerVentasPage() {
         f.match(s) &&
         (!q ||
           s.orderNumber?.toLowerCase().includes(q) ||
+          s.orderLabel?.toLowerCase().includes(q) ||
           s.productName?.toLowerCase().includes(q) ||
           s.retailer.toLowerCase().includes(q)),
     );
@@ -228,7 +229,7 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
   return (
     <tr className={cn('align-top hover:bg-slate-50', s.cancelled && 'text-slate-400')}>
       <td className="px-3 py-2.5 font-medium whitespace-nowrap">{s.retailer}</td>
-      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{s.orderNumber ?? '—'}</td>
+      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{s.orderLabel ?? s.orderNumber ?? '—'}</td>
       <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">
         {formatDate(s.orderDate)}
         {s.dispatchDeadline && (
@@ -236,7 +237,26 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
         )}
       </td>
       <td className="max-w-64 px-3 py-2.5 text-slate-700">{s.productName ?? '—'}</td>
-            <td className="px-3 py-2.5 whitespace-nowrap">
+      <td className="px-3 py-2.5 whitespace-nowrap">
+        {s.status ? (
+          <span
+            className={cn(
+              'rounded-full px-2 py-0.5 text-xs',
+              s.cancelled ? 'bg-zinc-100 text-zinc-500 line-through' : 'bg-slate-100 text-slate-700',
+            )}
+          >
+            {s.status}
+          </span>
+        ) : (
+          '—'
+        )}
+      </td>
+
+      {/* Montos */}
+      <td className="border-l border-slate-100 px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
+        {s.cancelled ? muted : clp(s.salePrice)}
+      </td>
+      <td className="px-3 py-2.5 whitespace-nowrap">
         <div className="flex items-start gap-1.5">
           {s.receipt && (
             <button
@@ -266,38 +286,6 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
           )}
           {(s.cancelled || !s.orderNumber) && !s.receipt && muted}
         </div>
-      </td>
-
-      {/* Montos */}
-      <td className="border-l border-slate-100 px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
-        {s.cancelled ? muted : clp(s.salePrice)}
-      </td>
-      <td className="px-3 py-2.5 whitespace-nowrap">
-        {s.receipt ? (
-          <button
-            onClick={canEdit ? onReceipt : undefined}
-            disabled={!canEdit}
-            title={canEdit ? 'Editar boleta' : undefined}
-            className="group/receipt text-left disabled:cursor-default"
-          >
-            <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-medium text-slate-700">
-              N° {s.receipt.number}
-              {canEdit && <Pencil className="hidden size-3 text-slate-400 group-hover/receipt:inline" />}
-            </span>
-            <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)}</span>
-          </button>
-        ) : s.cancelled || !s.orderNumber ? (
-          muted
-        ) : canEdit ? (
-          <button
-            onClick={onReceipt}
-            className="inline-flex items-center gap-1 rounded-md border border-dashed border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:border-brand-500 hover:text-brand-600"
-          >
-            <Plus className="size-3" /> Agregar
-          </button>
-        ) : (
-          <span className="text-xs text-slate-400">Sin boleta</span>
-        )}
       </td>
       <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
         {s.settlementNet !== null ? (

@@ -39,7 +39,7 @@ export function CustomerDataDialog({ sale, onClose }: { sale: SaleRow; onClose: 
               )}
             </h2>
             <p className="text-xs text-slate-500">
-              {sale.retailer} · OC {sale.orderNumber}
+              {sale.retailer} · OC {sale.orderLabel ?? sale.orderNumber}
             </p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="Cerrar">

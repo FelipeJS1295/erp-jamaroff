@@ -3,7 +3,11 @@ import { PRICING_CHANNELS } from '@erp/shared';
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../database/database.module.js';
 import { customerReceipts, retailers } from '../database/schema/index.js';
-import { NOT_FULFILLMENT_SQL, ReconciliationService } from '../settlements/reconciliation.service.js';
+import {
+  NOT_FULFILLMENT_SQL,
+  ReconciliationService,
+  showsCustomerOrderId,
+} from '../settlements/reconciliation.service.js';
 import { SettlementsService } from '../settlements/settlements.service.js';
 
 /** IVA Chile */
@@ -25,6 +29,8 @@ export interface SaleWithMargin {
   retailerCode: string;
   retailer: string;
   orderNumber: string | null;
+  /** N° de orden para mostrar (Walmart: el del cliente, solo números, no la PO "P…") */
+  orderLabel: string | null;
   orderDate: string | null;
   dispatchDeadline: string | null;
   productName: string | null;
@@ -80,6 +86,7 @@ type SaleGroup = {
   retailer_name: string;
   fulfillment: boolean;
   order_number: string | null;
+  order_id: string | null;
   order_date: string | null;
   dispatch_deadline: string | null;
   product_name: string | null;
@@ -123,6 +130,7 @@ export class SalesService {
           r.name as retailer_name,
           not (${sql.raw(NOT_FULFILLMENT_SQL.replace(/fulfillment/g, 's.fulfillment'))}) as fulfillment,
           s.order_number,
+          min(s.order_id) as order_id,
           min(s.order_date)::text as order_date,
           min(s.dispatch_deadline)::text as dispatch_deadline,
           string_agg(distinct s.product_name, ' + ') as product_name,
@@ -174,6 +182,7 @@ export class SalesService {
         retailerCode: g.retailer_code,
         retailer: g.fulfillment ? `${label} · Fulfillment` : label,
         orderNumber: g.order_number,
+        orderLabel: showsCustomerOrderId(g.retailer_code) ? (g.order_id ?? g.order_number) : g.order_number,
         orderDate: g.order_date,
         dispatchDeadline: g.dispatch_deadline,
         productName: g.product_name,

@@ -133,6 +133,12 @@ const MATCH_CONFIG: Record<string, MatchConfig> = {
   WALMART: { matchBy: 'ORDER_ID', expectedPrice: 'PAID' },
 };
 
+/**
+ * true si el retailer liquida con el N° de orden del cliente (Walmart) y no con la PO:
+ * ese número es el que se muestra en pantalla.
+ */
+export const showsCustomerOrderId = (code: string) => MATCH_CONFIG[code.toUpperCase()]?.matchBy === 'ORDER_ID';
+
 /** IVA Chile: para comparar ventas con montos netos (Walmart) contra liquidaciones con IVA */
 const VAT_RATE = 1.19;
 

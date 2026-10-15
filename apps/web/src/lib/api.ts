@@ -47,6 +47,8 @@ export interface SaleRow {
   retailerCode: string;
   retailer: string;
   orderNumber: string | null;
+  /** N° de orden para mostrar (Walmart: el del cliente, no la PO "P…") */
+  orderLabel: string | null;
   /** AAAA-MM-DD */
   orderDate: string | null;
   dispatchDeadline: string | null;
