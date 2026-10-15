@@ -81,7 +81,7 @@ export function AssignCostDialog(props: { retailerCode: string; row: Reconciliat
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div>
             <h2 className="text-base font-semibold">Asignar costo</h2>
-            <p className="text-xs text-slate-500">Orden {row.orderNumber}</p>
+            <p className="text-xs text-slate-500">Orden {row.orderLabel ?? row.orderNumber}</p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="Cerrar">
             <X className="size-4" />

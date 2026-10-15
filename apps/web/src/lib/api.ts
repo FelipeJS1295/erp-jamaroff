@@ -84,6 +84,8 @@ export interface ReconciliationRow {
   status: ReconciliationStatus;
   reasons: string[];
   orderNumber: string | null;
+  /** N° de orden para mostrar (Walmart: el del cliente, no la PO "P…") */
+  orderLabel: string | null;
   itemId: string | null;
   orderDate: string | null;
   productName: string | null;
@@ -102,6 +104,7 @@ export interface ReconciliationRow {
   expected: number | null;
   /** Total = Neto − Debíamos recibir (positivo = ganancia, negativo = pérdida) */
   result: number | null;
+  /** Productos de la venta sin costo. masterId/masterSku = tiene master, pero sin costo */
   missingProducts: MissingCostProduct[];
   /** Documentos de compra (facturas del proveedor) agregados a esta orden */
   documents: RowDocument[];

@@ -396,7 +396,7 @@ function Row(props: {
               type="checkbox"
               checked={checked}
               onChange={onToggle}
-              aria-label={`Seleccionar orden ${r.orderNumber ?? r.itemId}`}
+              aria-label={`Seleccionar orden ${r.orderLabel ?? r.orderNumber ?? r.itemId}`}
               className="size-4 rounded border-slate-300 accent-brand-600"
             />
           )}
@@ -408,7 +408,7 @@ function Row(props: {
           {SINGULAR[r.status]}
         </span>
       </td>
-      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{r.orderNumber ?? '—'}</td>
+      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{r.orderLabel ?? r.orderNumber ?? '—'}</td>
       <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">{formatDate(r.orderDate)}</td>
       <td className="max-w-56 px-3 py-2.5 text-slate-700">{r.productName ?? '—'}</td>
       <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">{clp(r.salePrice)}</td>

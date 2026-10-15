@@ -17,6 +17,11 @@ export interface ReconciliationRow {
   /** Motivos de la diferencia (vacío si está conciliada) */
   reasons: string[];
   orderNumber: string | null;
+    /**
+   * N° de orden para mostrar. Igual a orderNumber, salvo en los retailers que liquidan con
+   * otro número (Walmart: se muestra el N° de orden del cliente, solo números, y no la PO "P…")
+   */
+  orderLabel: string | null;
   itemId: string | null;
   orderDate: string | null;
   productName: string | null;
@@ -261,6 +266,10 @@ export class ReconciliationService {
         status: 'CONCILIADA',
         reasons: [],
         orderNumber: r.order_number as string | null,
+                orderLabel:
+          config.matchBy === 'ORDER_ID'
+            ? ((r.item_id as string | null) ?? (r.order_number as string | null))
+            : (r.order_number as string | null),
         itemId: r.item_id as string | null,
         orderDate: r.order_date as string | null,
         productName: r.product_name as string | null,
@@ -298,7 +307,7 @@ export class ReconciliationService {
       if (r.item_id === PENALTY_GROUP_KEY) {
         const count = Number(r.penalties ?? 0);
         row.status = 'MULTA';
-        row.orderNumber = null;
+        row.orderNumber = row.orderLabel = null;
         row.productName = 'Multa sin OC';
         row.reasons.push(`${count} ${count === 1 ? 'cobro' : 'cobros'} por multa`);
         noProductExpected();

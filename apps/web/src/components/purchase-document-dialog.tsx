@@ -136,7 +136,7 @@ export function PurchaseDocumentDialog(props: {
                   <tr key={r.itemId} className="align-top">
                     <td className="px-3 py-2">
                       <p className="text-slate-800">{r.productName ?? 'Sin nombre'}</p>
-                      <p className="font-mono text-xs text-slate-400">OC {r.orderNumber ?? r.itemId}</p>
+                      <p className="font-mono text-xs text-slate-400">OC {r.orderLabel ?? r.orderNumber ?? r.itemId}</p>
                     </td>
                     <td className="px-3 py-2">
                       <div className="relative">
