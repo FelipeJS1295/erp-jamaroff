@@ -12,6 +12,7 @@ import {
   FileUp,
   LayoutDashboard,
   List,
+  Receipt,
   Scale,
   Store,
   Tags,
@@ -52,6 +53,10 @@ const sections: NavSection[] = [
       { label: 'Ver ventas', href: '/ventas/listado', icon: List, ready: true },
       { label: 'Cargar archivos', href: '/ventas/cargas', icon: FileSpreadsheet, ready: true, edit: true },
     ],
+  },
+  {
+    title: 'Compras',
+    items: [{ label: 'Facturas', href: '/compras/facturas', icon: Receipt, ready: true }],
   },
   {
     title: 'Finanzas',

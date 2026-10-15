@@ -1,4 +1,4 @@
-import { index, numeric, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
+import { date, index, numeric, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { retailers } from './retailers.js';
 import { users } from './users.js';
@@ -94,6 +94,30 @@ export const customerReceipts = pgTable(
 );
 
 export type CustomerReceipt = typeof customerReceipts.$inferSelect;
+
+/**
+ * Pagos a una factura del proveedor (abonos). La deuda de la factura es
+ * su total con IVA menos la suma de sus pagos.
+ */
+export const purchaseDocumentPayments = pgTable(
+  'purchase_document_payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    documentId: uuid('document_id')
+      .notNull()
+      .references(() => purchaseDocuments.id, { onDelete: 'cascade' }),
+    /** Monto pagado (con IVA, igual que el total de la factura) */
+    amount: numeric('amount', { precision: 14, scale: 2 }).notNull(),
+    paidAt: date('paid_at').notNull(),
+    /** Transferencia, efectivo, cheque… */
+    method: varchar('method', { length: 40 }),
+    /** N° de operación o comentario */
+    note: text('note'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('purchase_document_payments_document_idx').on(t.documentId)],
+);
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type PurchaseDocument = typeof purchaseDocuments.$inferSelect;

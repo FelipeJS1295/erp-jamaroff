@@ -142,6 +142,37 @@ export interface RowDocument {
   amountGross: number;
 }
 
+/** Factura del proveedor con sus totales y lo pagado */
+export interface PurchaseInvoice {
+  id: string;
+  supplierId: string;
+  supplier: string;
+  documentNumber: string;
+  /** Fecha en que se ingresó (AAAA-MM-DD) */
+  createdAt: string;
+  orders: number;
+  net: number;
+  vat: number;
+  /** Total con IVA */
+  total: number;
+  paid: number;
+  /** Lo que falta pagar */
+  balance: number;
+  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA';
+  lastPaymentAt: string | null;
+}
+
+export interface PurchaseInvoiceDetail extends PurchaseInvoice {
+  lines: { id: string; retailer: string; orderNumber: string | null; productName: string | null; net: number; total: number }[];
+  payments: {
+    id: string;
+    amount: number;
+    paidAt: string;
+    method: string | null;
+    note: string | null;
+    createdBy: string | null;
+  }[];
+}
 export interface Supplier {
   id: string;
   name: string;
@@ -529,6 +560,13 @@ export const api = {
       '/purchases/documents',
       { method: 'POST', body: JSON.stringify(data) },
     ),
+    /** Facturas de proveedores y sus pagos */
+  listInvoices: () => request<PurchaseInvoice[]>('/purchases/invoices'),
+  getInvoice: (id: string) => request<PurchaseInvoiceDetail>(`/purchases/invoices/${id}`),
+  addInvoicePayment: (id: string, data: { amount: string; paidAt: string; method: string | null; note: string | null }) =>
+    request<{ id: string }>(`/purchases/invoices/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteInvoicePayment: (paymentId: string) =>
+    request<{ deleted: boolean }>(`/purchases/payments/${paymentId}`, { method: 'DELETE' }),
   deletePurchaseLine: (lineId: string) =>
     request<{ deleted: boolean; documentDeleted: boolean }>(`/purchases/lines/${lineId}`, { method: 'DELETE' }),
 

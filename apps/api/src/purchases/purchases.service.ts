@@ -1,8 +1,10 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PRICING_CHANNELS } from '@erp/shared';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../database/database.module.js';
 import {
   purchaseDocumentLines,
+  purchaseDocumentPayments,
   purchaseDocuments,
   retailers,
   suppliers,
@@ -28,6 +30,49 @@ export interface RowDocument {
   amountNet: number;
   amountGross: number;
 }
+
+/** Factura del proveedor con sus totales y lo pagado */
+export interface PurchaseInvoice {
+  id: string;
+  supplierId: string;
+  supplier: string;
+  documentNumber: string;
+  /** Fecha en que se ingresó (AAAA-MM-DD) */
+  createdAt: string;
+  orders: number;
+  net: number;
+  vat: number;
+  /** Total con IVA */
+  total: number;
+  paid: number;
+  /** Lo que falta pagar */
+  balance: number;
+  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA';
+  lastPaymentAt: string | null;
+}
+
+export interface PurchaseInvoiceDetail extends PurchaseInvoice {
+  lines: {
+    id: string;
+    retailer: string;
+    orderNumber: string | null;
+    productName: string | null;
+    net: number;
+    total: number;
+  }[];
+  payments: {
+    id: string;
+    amount: number;
+    paidAt: string;
+    method: string | null;
+    note: string | null;
+    createdBy: string | null;
+  }[];
+}
+
+const RETAILER_LABELS: Record<string, string> = Object.fromEntries(
+  PRICING_CHANNELS.map((c) => [c.code, c.label]),
+);
 
 /** Retailer en la base a partir de la opción de conciliación (CENCOSUD_FULFILLMENT -> CENCOSUD) */
 const baseRetailerCode = (code: string) => code.toUpperCase().replace(/_FULFILLMENT$/, '');
@@ -124,10 +169,176 @@ export class PurchasesService {
         .from(purchaseDocumentLines)
         .where(eq(purchaseDocumentLines.documentId, line.documentId));
       if (remaining === 0) {
+        // Si la factura ya tiene pagos, no se puede quedar sin órdenes (se perderían los pagos)
+        const [{ payments }] = await tx
+          .select({ payments: sql<number>`count(*)::int` })
+          .from(purchaseDocumentPayments)
+          .where(eq(purchaseDocumentPayments.documentId, line.documentId));
+        if (payments > 0) {
+          throw new BadRequestException(
+            'Es la última orden de una factura que ya tiene pagos. Elimina primero los pagos en Facturas.',
+          );
+        }
         await tx.delete(purchaseDocuments).where(eq(purchaseDocuments.id, line.documentId));
       }
       return { deleted: true, documentDeleted: remaining === 0 };
     });
+  }
+
+  /** Todas las facturas de proveedores con su total, lo pagado y el saldo (las más nuevas primero) */
+  async listInvoices(): Promise<PurchaseInvoice[]> {
+    const { rows } = await this.db.execute<{
+      id: string;
+      supplier_id: string;
+      supplier: string;
+      document_number: string;
+      created_at: string;
+      orders: number;
+      net: number;
+      total: number;
+      paid: number;
+      last_payment_at: string | null;
+    }>(sql`
+      select
+        d.id, d.supplier_id, s.name as supplier, d.document_number,
+        (d.created_at at time zone 'America/Santiago')::date::text as created_at,
+        coalesce(l.orders, 0)::int as orders,
+        coalesce(l.net, 0)::float8 as net,
+        coalesce(l.total, 0)::float8 as total,
+        coalesce(p.paid, 0)::float8 as paid,
+        p.last_payment_at::text as last_payment_at
+      from purchase_documents d
+      join suppliers s on s.id = d.supplier_id
+      left join lateral (
+        select count(*) as orders, sum(amount_net) as net,
+          -- con IVA por línea, redondeado igual que en la conciliación
+          sum(round(amount_net * ${sql.raw(String(VAT_RATE))})) as total
+        from purchase_document_lines where document_id = d.id
+      ) l on true
+      left join lateral (
+        select sum(amount) as paid, max(paid_at) as last_payment_at
+        from purchase_document_payments where document_id = d.id
+      ) p on true
+      order by d.created_at desc
+    `);
+    return rows.map((r) => {
+      const net = Math.round(r.net);
+      const total = Math.round(r.total);
+      const paid = Math.round(r.paid);
+      const balance = total - paid;
+      return {
+        id: r.id,
+        supplierId: r.supplier_id,
+        supplier: r.supplier,
+        documentNumber: r.document_number,
+        createdAt: r.created_at,
+        orders: r.orders,
+        net,
+        vat: total - net,
+        total,
+        paid,
+        balance,
+        status: paid <= 0 ? 'PENDIENTE' : balance > 0 ? 'PARCIAL' : 'PAGADA',
+        lastPaymentAt: r.last_payment_at,
+      };
+    });
+  }
+
+  /** Una factura con sus órdenes y sus pagos */
+  async getInvoice(id: string): Promise<PurchaseInvoiceDetail> {
+    const invoice = (await this.listInvoices()).find((i) => i.id === id);
+    if (!invoice) throw new NotFoundException('La factura no existe');
+
+    const [lines, payments] = await Promise.all([
+      this.db
+        .select({
+          id: purchaseDocumentLines.id,
+          retailerCode: retailers.code,
+          retailerName: retailers.name,
+          orderNumber: purchaseDocumentLines.orderNumber,
+          productName: purchaseDocumentLines.productName,
+          amountNet: purchaseDocumentLines.amountNet,
+        })
+        .from(purchaseDocumentLines)
+        .innerJoin(retailers, eq(retailers.id, purchaseDocumentLines.retailerId))
+        .where(eq(purchaseDocumentLines.documentId, id))
+        .orderBy(asc(purchaseDocumentLines.createdAt)),
+      this.db.execute<{
+        id: string;
+        amount: number;
+        paid_at: string;
+        method: string | null;
+        note: string | null;
+        created_by: string | null;
+      }>(sql`
+        select p.id, p.amount::float8 as amount, p.paid_at::text as paid_at, p.method, p.note,
+          u.name as created_by
+        from purchase_document_payments p
+        left join users u on u.id = p.created_by
+        where p.document_id = ${id}
+        order by p.paid_at, p.created_at
+      `),
+    ]);
+
+    return {
+      ...invoice,
+      lines: lines.map((l) => {
+        const net = Number(l.amountNet);
+        return {
+          id: l.id,
+          retailer: RETAILER_LABELS[l.retailerCode] ?? l.retailerName,
+          orderNumber: l.orderNumber,
+          productName: l.productName,
+          net: Math.round(net),
+          total: Math.round(net * VAT_RATE),
+        };
+      }),
+      payments: payments.rows.map((p) => ({
+        id: p.id,
+        amount: Math.round(p.amount),
+        paidAt: p.paid_at,
+        method: p.method,
+        note: p.note,
+        createdBy: p.created_by,
+      })),
+    };
+  }
+
+  /** Registra un pago (abono) a una factura. No puede ser mayor a lo que falta pagar */
+  async addPayment(
+    documentId: string,
+    input: { amount: string; paidAt: string; method: string | null; note: string | null },
+    userId: string | null,
+  ) {
+    const invoice = (await this.listInvoices()).find((i) => i.id === documentId);
+    if (!invoice) throw new NotFoundException('La factura no existe');
+    const amount = Number(input.amount);
+    if (amount > invoice.balance + 0.5) {
+      throw new BadRequestException(
+        `El pago ($${Math.round(amount).toLocaleString('es-CL')}) es mayor a lo que falta pagar ($${invoice.balance.toLocaleString('es-CL')})`,
+      );
+    }
+    const [row] = await this.db
+      .insert(purchaseDocumentPayments)
+      .values({
+        documentId,
+        amount: input.amount,
+        paidAt: input.paidAt,
+        method: input.method,
+        note: input.note,
+        createdBy: userId,
+      })
+      .returning({ id: purchaseDocumentPayments.id });
+    return row;
+  }
+
+  async deletePayment(id: string) {
+    const [row] = await this.db
+      .delete(purchaseDocumentPayments)
+      .where(eq(purchaseDocumentPayments.id, id))
+      .returning({ id: purchaseDocumentPayments.id });
+    if (!row) throw new NotFoundException('El pago ya no existe');
+    return { deleted: true };
   }
 
   /** Documentos de las filas de la conciliación de un retailer, agrupados por clave de fila */

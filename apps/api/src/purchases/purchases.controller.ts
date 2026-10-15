@@ -20,6 +20,16 @@ const amountSchema = z
     return n.toFixed(2);
   });
 
+const paymentSchema = z.object({
+  /** Monto pagado, con IVA */
+  amount: amountSchema,
+  paidAt: z
+    .string({ error: 'Falta la fecha del pago' })
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (usa AAAA-MM-DD)'),
+  method: z.string().trim().max(40).nullish().transform((v) => v || null),
+  note: z.string().trim().max(500).nullish().transform((v) => v || null),
+});
+
 const documentSchema = z.object({
   supplier: z
     .string({ error: 'Falta el proveedor' })
@@ -51,6 +61,10 @@ const documentSchema = z.object({
  *   GET    /api/purchases/suppliers
  *   POST   /api/purchases/documents     { supplier, documentNumber, retailerCode, lines[] }
  *   DELETE /api/purchases/lines/:id     quita una orden del documento
+ *   GET    /api/purchases/invoices                facturas con total, pagado y saldo
+ *   GET    /api/purchases/invoices/:id            factura con sus órdenes y pagos
+ *   POST   /api/purchases/invoices/:id/payments   { amount, paidAt, method?, note? }
+ *   DELETE /api/purchases/payments/:id
  * Las rutas que modifican quedan para ADMIN y OPERADOR (regla general del AuthGuard).
  */
 @Controller('purchases')
@@ -70,5 +84,29 @@ export class PurchasesController {
   @Delete('lines/:id')
   removeLine(@Param('id', ParseUUIDPipe) id: string) {
     return this.purchases.deleteLine(id);
+  }
+
+  @Get('invoices')
+  invoices() {
+    return this.purchases.listInvoices();
+  }
+
+  @Get('invoices/:id')
+  invoice(@Param('id', ParseUUIDPipe) id: string) {
+    return this.purchases.getInvoice(id);
+  }
+
+  @Post('invoices/:id/payments')
+  addPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: SessionUser,
+  ) {
+    return this.purchases.addPayment(id, validate(paymentSchema, body), user?.id ?? null);
+  }
+
+  @Delete('payments/:id')
+  removePayment(@Param('id', ParseUUIDPipe) id: string) {
+    return this.purchases.deletePayment(id);
   }
 }
