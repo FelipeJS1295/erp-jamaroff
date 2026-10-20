@@ -43,8 +43,10 @@ export interface SaleWithMargin {
     id: string;
     number: string;
     totalGross: number;
-    /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (desde el sistema, con PDF) · REVISAR */
+    /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (desde el sistema, con PDF) · REVISAR · BORRADOR (factura en MIPYME) */
     status: string;
+    /** 39 boleta · 33 factura */
+    documentType: number;
     /** Fecha de emisión en el SII (AAAA-MM-DD); null si se anotó a mano */
     issuedAt: string | null;
     /** Total de notas de crédito emitidas/anotadas sobre la boleta (con IVA) */
@@ -110,6 +112,7 @@ type SaleGroup = {
   receipt_number: string | null;
   receipt_total: number | null;
   receipt_status: string | null;
+  receipt_type: number | null;
   receipt_issued_at: string | null;
   nc_valid: number;
   nc_draft: number;
@@ -158,6 +161,7 @@ export class SalesService {
           min(cr.receipt_number) as receipt_number,
           min(cr.total_gross)::float8 as receipt_total,
           min(cr.status) as receipt_status,
+          min(cr.document_type) as receipt_type,
           min(cr.issued_at)::text as receipt_issued_at,
           -- Notas de crédito: emitidas/anotadas (rebajan la boleta) y borradores sin firmar
           max((select coalesce(sum(n.amount_gross), 0) from credit_notes n
@@ -222,6 +226,7 @@ export class SalesService {
                 number: g.receipt_number,
                 totalGross: Math.round(g.receipt_total),
                 status: g.receipt_status ?? 'REGISTRADA',
+                documentType: g.receipt_type ?? 39,
                 issuedAt: g.receipt_issued_at,
                 creditNotes: Math.round(g.nc_valid ?? 0),
                 draftCreditNotes: g.nc_draft ?? 0,

@@ -2,7 +2,7 @@ import { healthResponseSchema, type HealthResponse } from '@erp/shared';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100/api';
 
-export type ReceiptStatus = 'REGISTRADA' | 'EMITIENDO' | 'EMITIDA' | 'REVISAR';
+export type ReceiptStatus = 'REGISTRADA' | 'EMITIENDO' | 'EMITIDA' | 'REVISAR' | 'BORRADOR';
 
 /** ¿Está configurada la emisión de boletas en el SII (API Gateway)? */
 export interface SiiStatus {
@@ -117,6 +117,8 @@ export interface SaleRow {
     creditNotes: number;
     /** Notas en borrador (falta firmarlas en MIPYME) */
     draftCreditNotes: number;
+    /** 39 boleta · 33 factura */
+    documentType: number;
   } | null;
   /** Neto pagado por el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
@@ -251,6 +253,8 @@ export interface SiiPurchase {
   erpStatus: 'NUEVA' | 'COINCIDE' | 'IMPORTADA';
   documentId: string | null;
   erpSupplier: string | null;
+  /** La emitió un retailer (comisiones): se guarda solo para cuadrar con las liquidaciones */
+  retailer: { id: string; name: string } | null;
   assignedNet: number;
 }
 
@@ -258,7 +262,7 @@ export interface SiiPurchasesPreview {
   month: string;
   warnings: string[];
   documents: SiiPurchase[];
-  totals: { count: number; net: number; vat: number; total: number; newCount: number };
+  totals: { count: number; net: number; vat: number; total: number; newCount: number; retailerCount: number };
 }
 
 export interface PurchaseInvoiceDetail extends PurchaseInvoice {
@@ -545,6 +549,10 @@ export interface CreditNote {
   notes: string | null;
   createdAt: string;
   returnId: string | null;
+  /** Emitida en el Portal MIPYME: se puede ver su PDF */
+  hasPdf: boolean;
+  /** 39 boleta · 33 factura */
+  receiptType: number;
 }
 
 /** Orden cancelada con boleta a la que le falta nota de crédito */
@@ -693,11 +701,13 @@ export interface VatMonth {
   salesWithoutReceipt: number;
   salesWithoutReceiptVat: number;
   draftCreditNotes: number;
+  /** IVA de las facturas de retailers traídas del SII (null si no hay) */
+  retailerInvoicesVat: number | null;
 }
 
 export interface VatDocument {
   date: string | null;
-  kind: 'BOLETA' | 'NOTA_CREDITO' | 'COMPRA' | 'COMISION' | 'LOGISTICA';
+  kind: 'BOLETA' | 'NOTA_CREDITO' | 'COMPRA' | 'COMISION' | 'LOGISTICA' | 'FACTURA_RETAILER';
   retailer: string | null;
   reference: string;
   description: string | null;
@@ -723,6 +733,101 @@ async function handle<T>(res: Response): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+// ---------------------------------------------------------------- Portal MIPYME
+
+export interface MipymeSyncResult {
+  checked: number;
+  emitted: { label: string; folio: string }[];
+  stillDraft: number;
+  notFound: string[];
+}
+
+export interface FacturaReceptor {
+  rut: string;
+  name: string;
+  activity: string;
+  address: string;
+  commune: string;
+}
+
+export interface FacturaPreview {
+  retailerCode: string;
+  orderNumber: string;
+  item: string;
+  total: number;
+  issueDate: string;
+  existing: { id: string; number: string; status: string } | null;
+  wantsInvoice: boolean;
+  receptor: FacturaReceptor;
+}
+
+export interface Contribuyente {
+  rut: string;
+  razonSocial: string | null;
+  direcciones: { direccion: string; comuna: string }[];
+  actividades: { codigo: string; glosa: string }[];
+}
+
+export interface SalesCheck {
+  month: string;
+  types: {
+    type: number;
+    name: string;
+    erp: { count: number; total: number };
+    sii: { count: number; total: number } | null;
+    countDiff: number | null;
+    totalDiff: number | null;
+  }[];
+}
+
+export interface InvoiceItem {
+  line: number;
+  code: string | null;
+  name: string;
+  description: string | null;
+  quantity: number;
+  unit: string | null;
+  price: number;
+  discount: number;
+  amount: number;
+}
+
+export interface OrderSuggestion {
+  retailerCode: string;
+  retailer: string;
+  itemKey: string;
+  orderNumber: string;
+  orderLabel: string;
+  orderDate: string | null;
+  productName: string | null;
+  sellerSku: string | null;
+  expectedNet: number | null;
+  score: number;
+}
+
+export interface DispatchGuide {
+  id: string;
+  guideDate: string;
+  transferType: number;
+  transferLabel: string;
+  receptorRut: string;
+  receptorName: string;
+  receptorActivity: string | null;
+  address: string | null;
+  commune: string | null;
+  items: { name: string; quantity: number; price: number }[];
+  totalGross: number;
+  reference: string | null;
+  status: 'BORRADOR' | 'EMITIDA';
+  draftCode: string | null;
+  folio: string | null;
+  issuedAt: string | null;
+  hasPdf: boolean;
+  notes: string | null;
+}
+
+export type GuideInput = Omit<DispatchGuide, 'id' | 'transferLabel' | 'totalGross' | 'status' | 'draftCode' | 'folio' | 'issuedAt' | 'hasPdf'>;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
@@ -804,6 +909,31 @@ export const api = {
   vatMonths: (months = 12) => request<VatMonth[]>(`/vat?months=${months}`),
   vatDetail: (month: string) => request<VatDocument[]>(`/vat/${month}`),
   vatCsvUrl: (month: string) => `${API_URL}/vat/${month}/csv`,
+
+  // Portal MIPYME
+  mipymeSync: () => request<MipymeSyncResult>('/sii/mipyme/sincronizar', { method: 'POST' }),
+  contribuyente: (rut: string) => request<Contribuyente>(`/sii/mipyme/contribuyente/${encodeURIComponent(rut)}`),
+  facturaPreview: (retailerCode: string, orderNumber: string) =>
+    request<FacturaPreview>(
+      `/sii/mipyme/facturas/preview?retailer=${encodeURIComponent(retailerCode)}&order=${encodeURIComponent(orderNumber)}`,
+    ),
+  createFactura: (data: { retailerCode: string; orderNumber: string; receptor: FacturaReceptor }) =>
+    request<{ id: string; draftCode: string }>('/sii/mipyme/facturas', { method: 'POST', body: JSON.stringify(data) }),
+  deleteFactura: (id: string) => request<{ deleted: boolean; portal: string }>(`/sii/mipyme/facturas/${id}`, { method: 'DELETE' }),
+  salesCheck: (month: string) => request<SalesCheck>(`/sii/mipyme/ventas/${month}`),
+  creditNotePdfUrl: (id: string) => `${API_URL}/sii/mipyme/notas-credito/${id}/pdf`,
+  purchasePdfUrl: (id: string) => `${API_URL}/sii/mipyme/compras/${id}/pdf`,
+  purchaseItems: (id: string, refresh = false) =>
+    request<{ items: (InvoiceItem & { suggestions: OrderSuggestion[] })[] }>(
+      `/sii/mipyme/compras/${id}/productos${refresh ? '?refresh=1' : ''}`,
+    ),
+  listGuides: () => request<DispatchGuide[]>('/sii/mipyme/guias'),
+  createGuide: (data: GuideInput) =>
+    request<{ id: string; draftCode: string }>('/sii/mipyme/guias', { method: 'POST', body: JSON.stringify(data) }),
+  confirmGuide: (id: string, folio: string, issuedAt: string) =>
+    request<{ ok: boolean }>(`/sii/mipyme/guias/${id}/folio`, { method: 'PATCH', body: JSON.stringify({ folio, issuedAt }) }),
+  deleteGuide: (id: string) => request<{ deleted: boolean; portal: string | null }>(`/sii/mipyme/guias/${id}`, { method: 'DELETE' }),
+  guidePdfUrl: (id: string) => `${API_URL}/sii/mipyme/guias/${id}/pdf`,
 
   /** Boletas en el SII (API Gateway) */
   siiStatus: () => request<SiiStatus>('/sii/status'),

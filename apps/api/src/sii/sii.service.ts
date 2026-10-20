@@ -125,7 +125,9 @@ export class SiiService {
       const why =
         p.existing.status === 'EMITIENDO'
           ? 'se está emitiendo en este momento'
-          : p.existing.status === 'REVISAR'
+          : p.existing.status === 'BORRADOR'
+            ? 'tiene una factura en borrador en el Portal MIPYME'
+            : p.existing.status === 'REVISAR'
             ? 'tiene un intento sin confirmar: revísalo en el portal eBoleta del SII'
             : `ya tiene la boleta N° ${p.existing.number}`;
       throw new ConflictException(`La orden ${orderNumber} ${why}`);
@@ -240,6 +242,12 @@ export class SiiService {
     const { code, label } = await this.orderLabel(r.retailerId, r.orderNumber);
     const fileName = code === 'FALABELLA' ? `${label}_${r.receiptNumber}.pdf` : `${label}.pdf`;
     if (r.pdfData) return { data: Buffer.from(r.pdfData, 'base64'), fileName };
+    // Factura firmada en el Portal MIPYME
+    if (r.mipymeCode) {
+      const data = await this.gateway.pdfMipyme('emitidos', r.mipymeCode);
+      await this.db.update(customerReceipts).set({ pdfData: data.toString('base64') }).where(eq(customerReceipts.id, r.id));
+      return { data, fileName };
+    }
     const data = await this.gateway.pdfBoleta(Number(r.receiptNumber), r.documentType, r.issuedAt ?? todayCL());
     await this.db.update(customerReceipts).set({ pdfData: data.toString('base64') }).where(eq(customerReceipts.id, r.id));
     return { data, fileName };

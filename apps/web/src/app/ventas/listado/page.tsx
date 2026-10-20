@@ -1,7 +1,7 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, Eye, FileMinus, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send, Undo2, X } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Building2, Download, Eye, FileMinus, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send, Undo2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/components/auth';
@@ -9,6 +9,8 @@ import { CreditNoteDialog } from '@/components/credit-note-dialog';
 import { CustomerDataDialog } from '@/components/customer-data-dialog';
 import { DownloadBoletasDialog } from '@/components/download-boletas-dialog';
 import { EmitBoletaDialog, EmitBoletasDialog } from '@/components/emit-boleta-dialog';
+import { FacturaDialog } from '@/components/factura-dialog';
+import { MipymeSync } from '@/components/mipyme-sync';
 import { ReceiptDialog } from '@/components/receipt-dialog';
 import { ReturnDialog } from '@/components/return-dialog';
 import { api, type SaleRow } from '@/lib/api';
@@ -73,6 +75,7 @@ export default function VerVentasPage() {
   // Nota de crédito / devolución de una orden
   const [ncFor, setNcFor] = useState<SaleRow | null>(null);
   const [returnFor, setReturnFor] = useState<SaleRow | null>(null);
+  const [facturaFor, setFacturaFor] = useState<SaleRow | null>(null);
 
   const rows = useMemo(() => {
     const f = FILTERS.find((x) => x.id === filter)!;
@@ -142,6 +145,7 @@ export default function VerVentasPage() {
           Actualizar
         </button>
       </header>
+      <MipymeSync hasDrafts={(sales.data ?? []).some((x) => x.receipt?.status === 'BORRADOR')} className="mb-4" />
 
       {sales.data && sales.data.length > 0 && (
         <>
@@ -276,6 +280,7 @@ export default function VerVentasPage() {
                     onCustomer={() => setCustomerFor(s)}
                     onCreditNote={() => setNcFor(s)}
                     onReturn={() => setReturnFor(s)}
+                    onFactura={siiEnabled ? () => setFacturaFor(s) : undefined}
                     onEmit={siiEnabled ? () => setEmitFor(s) : undefined}
                     selected={selected.has(s.key)}
                     onToggle={() => toggle(s.key)}
@@ -296,6 +301,14 @@ export default function VerVentasPage() {
           orderLabel={ncFor.orderLabel}
           defaults={{ refCode: 1, reason: ncFor.cancelled ? 'Orden cancelada' : 'Devolución del cliente' }}
           onClose={() => setNcFor(null)}
+        />
+      )}
+      {facturaFor && facturaFor.orderNumber && (
+        <FacturaDialog
+          retailerCode={facturaFor.retailerCode}
+          orderNumber={facturaFor.orderNumber}
+          orderLabel={facturaFor.orderLabel}
+          onClose={() => setFacturaFor(null)}
         />
       )}
       {returnFor && returnFor.orderNumber && (
@@ -369,11 +382,18 @@ function SaleLine(props: {
   onCustomer: () => void;
   onCreditNote: () => void;
   onReturn: () => void;
+  onFactura?: () => void;
   onEmit?: () => void;
   selected: boolean;
   onToggle: () => void;
 }) {
-  const { s, onReceipt, onCustomer, onCreditNote, onReturn, onEmit, selected, onToggle } = props;
+  const { s, onReceipt, onCustomer, onCreditNote, onReturn, onFactura, onEmit, selected, onToggle } = props;
+  const queryClient = useQueryClient();
+  const dropFactura = useMutation({
+    mutationFn: (id: string) => api.deleteFactura(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['sales'] }),
+    onError: (err: Error) => window.alert(err.message),
+  });
   const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
@@ -421,11 +441,28 @@ function SaleLine(props: {
               className="mr-1 text-left"
             >
               <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-                N° {s.receipt.number}
+                {s.receipt.documentType === 33 ? 'Fact. ' : ''}N° {s.receipt.number}
                 <FileText className="size-3" />
               </span>
               <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)} · SII</span>
             </a>
+          )}
+          {s.receipt?.status === 'BORRADOR' && (
+            <span className="mr-1 text-left" title="Factura armada en el Portal MIPYME: falta firmarla allá">
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+                Factura borrador
+                {canEdit && (
+                  <button
+                    onClick={() => window.confirm('¿Quitar la factura en borrador? También se borra del Portal MIPYME.') && dropFactura.mutate(s.receipt!.id)}
+                    className="text-amber-500 hover:text-red-600"
+                    aria-label="Quitar factura en borrador"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)} · MIPYME</span>
+            </span>
           )}
           {(s.receipt?.status === 'REVISAR' || s.receipt?.status === 'EMITIENDO') && (
             <button
@@ -461,6 +498,11 @@ function SaleLine(props: {
               {onEmit && !s.receipt && (
                 <IconButton title="Emitir boleta en el SII" onClick={onEmit}>
                   <Send className="size-4" />
+                </IconButton>
+              )}
+              {onFactura && !s.receipt && (
+                <IconButton title="Hacer factura (borrador en el Portal MIPYME)" onClick={onFactura}>
+                  <Building2 className="size-4" />
                 </IconButton>
               )}
               {canEdit && !s.receipt && (

@@ -160,6 +160,11 @@ export function SiiPurchasesDialog({ onClose }: { onClose: () => void }) {
                     <td className="px-2 py-2">
                       <span className="font-medium">{d.supplierName}</span>
                       <span className="block text-xs text-slate-500">{d.supplierRut}</span>
+                      {d.retailer && (
+                        <span className="mt-0.5 block text-xs text-violet-700" title="Su IVA ya se cuenta desde las liquidaciones">
+                          Factura de {d.retailer.name}: se guarda aparte (comisiones)
+                        </span>
+                      )}
                       {d.erpSupplier && d.erpSupplier.toLowerCase() !== d.supplierName.toLowerCase() && (
                         <span className="block text-xs text-sky-700">en el ERP: {d.erpSupplier}</span>
                       )}
@@ -190,6 +195,10 @@ export function SiiPurchasesDialog({ onClose }: { onClose: () => void }) {
         <p className="text-xs text-slate-500">
           Total del mes en el SII: neto {clp(preview.data.totals.net)} · IVA {clp(preview.data.totals.vat)} · total {clp(preview.data.totals.total)}.
           Las que ya ingresaste a mano no se duplican: se les agregan el RUT y los montos del SII.
+          {preview.data.totals.retailerCount > 0 &&
+            ' Las facturas de retailers (comisiones, logística) no quedan como deuda ni suman IVA: se usan para cuadrar con las liquidaciones en el Resumen de IVA.'}
+          {preview.data.totals.retailerCount === 0 &&
+            ' Si ves facturas de Falabella, Paris, Walmart u otro retailer, completa su RUT en Maestras → Retailers para que no se cuenten dos veces.'}
         </p>
       )}
     </Modal>

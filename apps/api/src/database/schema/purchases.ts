@@ -52,6 +52,15 @@ export const purchaseDocuments = pgTable(
     siiStatus: varchar('sii_status', { length: 20 }),
     siiImportedAt: timestamp('sii_imported_at', { withTimezone: true }),
     siiData: jsonb('sii_data'),
+    /**
+     * Factura emitida por un retailer (comisiones, logística). Su IVA ya se cuenta desde
+     * la liquidación, así que no entra como compra ni como deuda con proveedores.
+     */
+    retailerId: uuid('retailer_id').references(() => retailers.id),
+    /** Código del documento recibido en el Portal MIPYME (para su PDF) */
+    mipymeCode: varchar('mipyme_code', { length: 40 }),
+    /** Productos de la factura leídos de su XML (NmbItem, QtyItem, PrcItem…) */
+    siiItems: jsonb('sii_items'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -112,10 +121,16 @@ export const customerReceipts = pgTable(
      * EMITIENDO   se está emitiendo en el SII (bloquea un segundo intento)
      * EMITIDA     emitida desde el sistema (API Gateway)
      * REVISAR     el SII no confirmó: revisar en el portal antes de reintentar
+     * BORRADOR    factura armada en el Portal MIPYME: falta firmarla allá
      */
     status: varchar('status', { length: 20 }).notNull().default('REGISTRADA'),
     /** Fecha de emisión en el SII */
     issuedAt: date('issued_at'),
+    /** Factura (33) armada como borrador en MIPYME: código del borrador y del emitido */
+    draftCode: varchar('draft_code', { length: 40 }),
+    mipymeCode: varchar('mipyme_code', { length: 40 }),
+    /** Datos del receptor de la factura (RUT, razón social, giro, dirección, comuna) */
+    receptor: jsonb('receptor'),
     /** PDF de la boleta (base64) y su URL en el SII */
     pdfData: text('pdf_data'),
     pdfUrl: text('pdf_url'),

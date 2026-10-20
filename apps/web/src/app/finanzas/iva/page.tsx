@@ -1,18 +1,21 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download } from 'lucide-react';
+import { AlertTriangle, Download, Scale } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { Button } from '@/components/kit';
 import { Badge, ErrorText, Loading, PageHeader, Stat, clp, dmy, monthName, td, th } from '@/components/kit';
 import { api, type VatDocument } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
-const KIND: Record<VatDocument['kind'], { label: string; tone: 'blue' | 'red' | 'green' | 'violet' | 'amber' }> = {
+const KIND: Record<VatDocument['kind'], { label: string; tone: 'blue' | 'red' | 'green' | 'violet' | 'amber' | 'slate' }> = {
   BOLETA: { label: 'Boleta', tone: 'blue' },
   NOTA_CREDITO: { label: 'Nota de crédito', tone: 'red' },
   COMPRA: { label: 'Factura proveedor', tone: 'green' },
   COMISION: { label: 'Comisión', tone: 'violet' },
   LOGISTICA: { label: 'Envío / logística', tone: 'amber' },
+  FACTURA_RETAILER: { label: 'Factura retailer (referencia)', tone: 'slate' },
 };
 
 export default function VatPage() {
@@ -101,6 +104,19 @@ export default function VatPage() {
                 <Stat label="IVA crédito" value={clp(m.credit)} hint={`Compras ${clp(m.creditPurchases)} · comisiones ${clp(m.creditCommissions)} · envío ${clp(m.creditLogistics)}`} />
                 <Stat label={m.balance >= 0 ? 'IVA a pagar' : 'Remanente (a favor)'} value={clp(Math.abs(m.balance))} tone={m.balance >= 0 ? 'red' : 'green'} />
               </div>
+              {m.retailerInvoicesVat !== null && (
+                <p className="mb-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  Facturas de los retailers en el SII (comisiones y servicios): IVA <b>{clp(m.retailerInvoicesVat)}</b> · en las liquidaciones:{' '}
+                  <b>{clp(m.creditCommissions + m.creditLogistics)}</b>
+                  {Math.abs(m.retailerInvoicesVat - (m.creditCommissions + m.creditLogistics)) > 1000 && (
+                    <span className="text-amber-700">
+                      {' '}
+                      — diferencia de {clp(m.retailerInvoicesVat - (m.creditCommissions + m.creditLogistics))}. Para el F29 vale lo facturado (SII); revisa si falta cargar alguna liquidación.
+                    </span>
+                  )}
+                </p>
+              )}
+              <SalesCheckPanel key={m.month} month={m.month} />
               {(m.salesWithoutReceipt > 0 || m.draftCreditNotes > 0) && (
                 <p className="mb-4 flex items-start gap-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -158,5 +174,64 @@ export default function VatPage() {
         </>
       )}
     </div>
+  );
+}
+
+/** Ventas del ERP vs Registro de Ventas del SII del mes, por tipo de documento */
+function SalesCheckPanel({ month }: { month: string }) {
+  const check = useMutation({ mutationFn: () => api.salesCheck(month) });
+  const ok = check.data?.types.every((t) => t.countDiff === 0 && t.totalDiff === 0);
+  return (
+    <section className="mb-4 rounded-lg border border-slate-200 bg-white">
+      <header className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <Scale className="size-4 text-slate-500" />
+        <h3 className="text-sm font-semibold">Cuadrar ventas con el SII</h3>
+        <span className="text-xs text-slate-500">Boletas, facturas y notas de crédito del ERP vs el Registro de Ventas del SII</span>
+        <Button variant="secondary" className="ml-auto" onClick={() => check.mutate()} loading={check.isPending}>
+          {check.data ? 'Consultar de nuevo' : 'Consultar SII'}
+        </Button>
+      </header>
+      <ErrorText error={check.error} />
+      {check.data && (
+        <div className="overflow-x-auto border-t border-slate-100">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-left text-xs text-slate-500">
+                <th className={th}>Documento</th>
+                <th className={cn(th, 'text-right')}>ERP</th>
+                <th className={cn(th, 'text-right')}>SII</th>
+                <th className={cn(th, 'text-right')}>Diferencia</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 tabular-nums">
+              {check.data.types.map((t) => (
+                <tr key={t.type}>
+                  <td className={td}>{t.name}</td>
+                  <td className={cn(td, 'text-right')}>
+                    {t.erp.count} · {clp(t.erp.total)}
+                  </td>
+                  <td className={cn(td, 'text-right')}>{t.sii ? `${t.sii.count} · ${clp(t.sii.total)}` : 'Sin datos'}</td>
+                  <td className={cn(td, 'text-right font-medium', t.totalDiff ? 'text-red-600' : 'text-emerald-600')}>
+                    {t.sii ? (t.countDiff || t.totalDiff ? `${t.countDiff! > 0 ? '+' : ''}${t.countDiff} · ${clp(t.totalDiff)}` : 'Cuadra') : '—'}
+                  </td>
+                </tr>
+              ))}
+              {check.data.types.length === 0 && (
+                <tr>
+                  <td className={cn(td, 'text-center text-slate-500')} colSpan={4}>
+                    Sin ventas en el mes.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="px-4 py-2 text-xs text-slate-500">
+            {ok
+              ? 'Todo cuadra con el SII.'
+              : 'Diferencia positiva = el SII tiene más que el ERP (documentos hechos fuera del sistema o no anotados). Negativa = el ERP tiene documentos que el SII no registra en el mes (fecha distinta o boleta anotada con otro N°).'}
+          </p>
+        </div>
+      )}
+    </section>
   );
 }

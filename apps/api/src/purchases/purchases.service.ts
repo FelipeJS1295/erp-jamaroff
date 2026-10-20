@@ -267,6 +267,8 @@ export class PurchasesService {
         select sum(amount) as paid, max(paid_at) as last_payment_at
         from purchase_document_payments where document_id = d.id
       ) p on true
+      -- Las facturas de retailers (comisiones) no son deuda con proveedores
+      where d.retailer_id is null
       order by d.created_at desc
     `);
     return rows.map((r) => {

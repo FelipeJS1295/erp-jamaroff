@@ -35,6 +35,8 @@ export const creditNotes = pgTable(
     status: varchar('status', { length: 20 }).notNull().default('BORRADOR'),
     /** Código del borrador en el Portal MIPYME */
     draftCode: varchar('draft_code', { length: 40 }),
+    /** Código del documento emitido en el Portal MIPYME (para bajar su PDF) */
+    mipymeCode: varchar('mipyme_code', { length: 40 }),
     /** Folio de la nota ya emitida */
     folio: varchar('folio', { length: 30 }),
     /** Fecha de emisión (define el mes en el resumen de IVA) */
@@ -95,3 +97,45 @@ export const productReturns = pgTable(
 );
 
 export type ProductReturn = typeof productReturns.$inferSelect;
+
+/**
+ * Guías de despacho (DTE 52) armadas como borrador en el Portal MIPYME.
+ * Mismo flujo que las notas de crédito: BORRADOR -> se firma en el portal -> EMITIDA.
+ */
+export const dispatchGuides = pgTable(
+  'dispatch_guides',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guideDate: date('guide_date').notNull(),
+    /**
+     * Motivo del traslado (IndTraslado del SII):
+     * 1 venta · 2 venta por efectuar · 3 consignación · 5 traslado interno ·
+     * 6 otros traslados no venta · 7 guía de devolución
+     */
+    transferType: integer('transfer_type').notNull().default(5),
+    receptorRut: varchar('receptor_rut', { length: 12 }).notNull(),
+    receptorName: varchar('receptor_name', { length: 100 }).notNull(),
+    receptorActivity: varchar('receptor_activity', { length: 40 }),
+    address: varchar('address', { length: 70 }),
+    commune: varchar('commune', { length: 20 }),
+    /** [{ name, quantity, price }] precio unitario con IVA (0 si es solo traslado) */
+    items: jsonb('items').notNull(),
+    totalGross: numeric('total_gross', { precision: 14, scale: 2 }).notNull().default('0'),
+    /** Orden o retailer relacionado (texto libre) */
+    reference: varchar('reference', { length: 80 }),
+    status: varchar('status', { length: 20 }).notNull().default('BORRADOR'),
+    draftCode: varchar('draft_code', { length: 40 }),
+    folio: varchar('folio', { length: 30 }),
+    issuedAt: date('issued_at'),
+    mipymeCode: varchar('mipyme_code', { length: 40 }),
+    siiResponse: jsonb('sii_response'),
+    notes: text('notes'),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index('dispatch_guides_date_idx').on(t.guideDate)],
+);

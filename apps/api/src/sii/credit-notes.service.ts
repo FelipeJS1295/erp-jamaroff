@@ -41,6 +41,8 @@ type CreditNoteRow = {
   notes: string | null;
   created_at: string;
   return_id: string | null;
+  has_pdf: boolean;
+  receipt_type: number;
 };
 
 type PendingRow = {
@@ -73,7 +75,7 @@ export class CreditNotesService {
     const { rows } = await this.db.execute<CreditNoteRow>(sql`
       select n.id, r.code as retailer_code, r.name as retailer, n.order_number, n.receipt_number,
         n.receipt_date::text as receipt_date, n.ref_code, n.reason, n.amount_gross::float8 as amount_gross,
-        n.status, n.draft_code, n.folio, n.issued_at::text as issued_at,
+        n.status, n.draft_code, n.folio, n.issued_at::text as issued_at, n.mipyme_code is not null as has_pdf, n.receipt_type,
         n.sii_response->>'error' as error, n.notes,
         (n.created_at at time zone 'America/Santiago')::date::text as created_at,
         (select pr.id::text from product_returns pr where pr.credit_note_id = n.id limit 1) as return_id
@@ -98,6 +100,8 @@ export class CreditNotesService {
       notes: r.notes,
       createdAt: r.created_at,
       returnId: r.return_id,
+      hasPdf: r.has_pdf,
+      receiptType: r.receipt_type,
     }));
   }
 
@@ -168,6 +172,30 @@ export class CreditNotesService {
     // Incluye líneas canceladas: la nota se hace justamente cuando la orden se cancela
     const data = await this.sales.customerData(retailerCode, orderNumber, true).catch(() => null);
     const total = Number(receipt.totalGross);
+    // Factura: la nota va a nombre de la empresa que recibió la factura
+    const r = (receipt.documentType === 33 ? receipt.receptor : null) as
+      | { rut?: string; name?: string; activity?: string; address?: string; commune?: string }
+      | null;
+    if (r?.rut) {
+      return {
+        retailerId: retailer.id,
+        retailerCode: retailerCode.toUpperCase(),
+        orderNumber,
+        receiptId: receipt.id,
+        receiptNumber: receipt.receiptNumber,
+        receiptType: receipt.documentType,
+        receiptDate: receipt.issuedAt,
+        receiptTotal: Math.round(total),
+        credited: Math.round(credited),
+        available: Math.round(total - credited),
+        customerName: r.name ?? 'Cliente',
+        customerRut: siiRut(r.rut) ?? RUT_GENERICO,
+        customerActivity: r.activity ?? null,
+        address: r.address ?? null,
+        commune: r.commune ?? null,
+        item: data ? [...new Set(data.lines.map((l) => l.productName ?? 'Producto'))].join(' + ') : 'Producto',
+      };
+    }
     return {
       retailerId: retailer.id,
       retailerCode: retailerCode.toUpperCase(),
@@ -181,6 +209,7 @@ export class CreditNotesService {
       available: Math.round(total - credited),
       customerName: (data?.customer.name ?? data?.shipping.name ?? '').trim() || 'Cliente',
       customerRut: siiRut(data?.customer.rut) ?? RUT_GENERICO,
+      customerActivity: null as string | null,
       address: data?.shipping.address ?? null,
       commune: data?.shipping.commune ?? null,
       item: data ? [...new Set(data.lines.map((l) => l.productName ?? 'Producto'))].join(' + ') : 'Producto',
@@ -214,7 +243,8 @@ export class CreditNotesService {
         receptorNombre: p.customerName,
         receptorDireccion: p.address,
         receptorComuna: p.commune,
-        item: `${input.refCode === 1 ? 'Anula' : 'Corrige'} boleta ${p.receiptNumber}: ${p.item}`,
+        receptorGiro: p.customerActivity,
+        item: `${input.refCode === 1 ? 'Anula' : 'Corrige'} ${p.receiptType === 33 ? 'factura' : 'boleta'} ${p.receiptNumber}: ${p.item}`,
         total: input.amountGross,
         boletaTipo: p.receiptType,
         boletaFolio: p.receiptNumber,
@@ -292,8 +322,18 @@ export class CreditNotesService {
     if (n.status === 'EMITIDA') {
       throw new BadRequestException(`La nota N° ${n.folio} ya está emitida en el SII: no se puede quitar`);
     }
+    // Si era un borrador, también se borra del Portal MIPYME (si ya no está, no importa)
+    let portal: 'ELIMINADO' | 'NO_SE_PUDO' | null = null;
+    if (n.status === 'BORRADOR' && n.draftCode) {
+      try {
+        await this.gateway.eliminarBorrador(n.draftCode);
+        portal = 'ELIMINADO';
+      } catch {
+        portal = 'NO_SE_PUDO';
+      }
+    }
     await this.db.update(productReturns).set({ creditNoteId: null }).where(eq(productReturns.creditNoteId, id));
     await this.db.delete(creditNotes).where(eq(creditNotes.id, id));
-    return { deleted: true };
+    return { deleted: true, portal };
   }
 }

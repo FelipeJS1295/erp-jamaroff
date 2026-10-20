@@ -1,10 +1,11 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, FileMinus, Trash2 } from 'lucide-react';
+import { AlertTriangle, FileMinus, FileText, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/components/auth';
 import { CreditNoteDialog } from '@/components/credit-note-dialog';
+import { MipymeSync } from '@/components/mipyme-sync';
 import { Badge, Button, ErrorText, Field, Loading, Modal, PageHeader, Stat, clp, dmy, input, td, th, todayCL } from '@/components/kit';
 import { api, type CreditNote, type CreditNoteStatus } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -80,8 +81,9 @@ export default function CreditNotesPage() {
     <div className="mx-auto max-w-7xl px-8 py-10">
       <PageHeader
         title="Notas de crédito"
-        subtitle="Anulan o rebajan una boleta cuando la orden se cancela o se devuelve. El ERP arma el borrador en el Portal MIPYME del SII y tú lo firmas allá."
+        subtitle="Anulan o rebajan una boleta cuando la orden se cancela o se devuelve. El ERP arma el borrador en el Portal MIPYME del SII y tú lo firmas allá; al volver, el ERP detecta la nota firmada y le anota el folio."
       />
+      <MipymeSync hasDrafts={drafts.length > 0} className="mb-4" />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-4">
         <Stat label="Canceladas con boleta sin nota" value={pending.data?.length ?? '—'} tone={pending.data?.length ? 'red' : undefined} hint={clp((pending.data ?? []).reduce((n, p) => n + p.missing, 0))} />
@@ -177,7 +179,9 @@ export default function CreditNotesPage() {
                       {n.retailer}
                       <span className="block font-mono text-xs text-slate-500">{n.orderNumber}</span>
                     </td>
-                    <td className={td}>N° {n.receiptNumber}</td>
+                    <td className={td}>
+                      {n.receiptType === 33 ? 'Factura' : 'Boleta'} N° {n.receiptNumber}
+                    </td>
                     <td className={cn(td, 'max-w-64')}>
                       {n.reason}
                       <span className="block text-xs text-slate-500">{n.refCode === 1 ? 'Anula la boleta' : 'Rebaja parcial'}</span>
@@ -190,6 +194,16 @@ export default function CreditNotesPage() {
                       </span>
                     </td>
                     <td className={cn(td, 'text-right whitespace-nowrap')}>
+                      {n.hasPdf && (
+                        <a
+                          href={api.creditNotePdfUrl(n.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mr-1 inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:underline"
+                        >
+                          <FileText className="size-3.5" /> PDF
+                        </a>
+                      )}
                       {canEdit && n.status === 'BORRADOR' && (
                         <Button variant="link" onClick={() => setConfirm(n)}>
                           Anotar folio
@@ -232,7 +246,7 @@ export default function CreditNotesPage() {
 function confirm2(n: CreditNote) {
   return window.confirm(
     n.status === 'BORRADOR'
-      ? `¿Quitar el borrador ${n.draftCode} del ERP? Si no lo vas a usar, bórralo también en el Portal MIPYME.`
+      ? `¿Quitar el borrador ${n.draftCode}? También se borra del Portal MIPYME.`
       : `¿Quitar la nota de crédito ${n.folio ?? ''} del ERP?`,
   );
 }

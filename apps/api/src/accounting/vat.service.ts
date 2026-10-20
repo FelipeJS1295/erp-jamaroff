@@ -34,6 +34,8 @@ export interface VatMonth {
   salesWithoutReceipt: number;
   salesWithoutReceiptVat: number;
   draftCreditNotes: number;
+  /** IVA de las facturas de retailers traídas del SII (null si no hay): debería parecerse a comisiones + logística */
+  retailerInvoicesVat: number | null;
 }
 
 /**
@@ -79,7 +81,18 @@ export class VatService {
         from purchase_documents d
         join suppliers sp on sp.id = d.supplier_id
         left join lateral (select sum(amount_net) as net from purchase_document_lines pl where pl.document_id = d.id) l on true
-        where d.sii_total is not null or l.net is not null
+        where d.retailer_id is null and (d.sii_total is not null or l.net is not null)
+        union all
+        -- Facturas que emitió un retailer (comisiones, logística): solo para cuadrar con las
+        -- liquidaciones; su IVA ya entra por COMISION / LOGISTICA y no se suma de nuevo
+        select coalesce(d.issue_date, (d.created_at at time zone 'America/Santiago')::date), 'FACTURA_RETAILER', r.name,
+          d.document_number,
+          case when d.document_type in (60, 61) then 'Nota de crédito' end,
+          (case when d.document_type in (60, 61) then -1 else 1 end) * d.sii_total,
+          (case when d.document_type in (60, 61) then -1 else 1 end) * d.sii_vat
+        from purchase_documents d
+        join retailers r on r.id = d.retailer_id
+        where d.sii_total is not null
         union all
         -- Comisiones y cargos de envío/logística cobrados en las liquidaciones (negativos)
         select sr.transaction_date,
@@ -133,6 +146,7 @@ export class VatService {
       const creditPurchases = sum('COMPRA');
       const creditCommissions = sum('COMISION');
       const creditLogistics = sum('LOGISTICA');
+      const retailerDocs = d.filter((x) => x.kind === 'FACTURA_RETAILER');
       const debit = debitReceipts + debitCreditNotes;
       const credit = creditPurchases + creditCommissions + creditLogistics;
       const p = pending.filter((x) => x.month === month);
@@ -150,6 +164,8 @@ export class VatService {
         salesWithoutReceipt,
         salesWithoutReceiptVat: vatOf(salesWithoutReceipt),
         draftCreditNotes: p.reduce((n, x) => n + Number(x.drafts), 0),
+        // IVA de las facturas de los retailers según el SII (para comparar con comisiones + logística)
+        retailerInvoicesVat: retailerDocs.length ? retailerDocs.reduce((n, x) => n + x.vat, 0) : null,
       });
     }
     return months.reverse();
@@ -176,6 +192,7 @@ export class VatService {
       COMPRA: 'Factura proveedor (crédito)',
       COMISION: 'Comisión retailer (crédito)',
       LOGISTICA: 'Envío/logística retailer (crédito)',
+      FACTURA_RETAILER: 'Factura del retailer (referencia, no suma)',
     };
     const rows = await this.detail(month);
     const esc = (v: unknown) => {

@@ -4,6 +4,7 @@ import { DRIZZLE, type Database } from '../database/database.module.js';
 import { purchaseDocuments, suppliers } from '../database/schema/index.js';
 import { ApiGatewayClient, SiiRejectedError, SiiUnknownError } from './api-gateway.client.js';
 import { siiRut } from './rut.js';
+import { amount, isoDate, normKey } from './sii-rows.js';
 
 export const DOCUMENT_TYPES: Record<number, string> = {
   29: 'Factura de inicio',
@@ -52,42 +53,18 @@ export interface SiiPurchase {
   erpSupplier: string | null;
   /** Neto ya asignado a órdenes en el ERP */
   assignedNet: number;
+  /**
+   * La emitió un retailer (comisiones, logística): se guarda aparte para cuadrar con las
+   * liquidaciones; no es deuda con proveedores ni se suma al IVA crédito (ya está en la liquidación)
+   */
+  retailer: { id: string; name: string } | null;
 }
 
-interface Normalized extends Omit<SiiPurchase, 'erpStatus' | 'documentId' | 'erpSupplier' | 'assignedNet'> {
+interface Normalized extends Omit<SiiPurchase, 'erpStatus' | 'documentId' | 'erpSupplier' | 'assignedNet' | 'retailer'> {
   raw: Record<string, unknown>;
 }
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
-
-/** "Monto Neto" / "detMntNeto" -> "montoneto" / "detmntneto" */
-const normKey = (k: string) =>
-  k
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-
-/** Monto del SII: número o texto ("1234", "1.234", "-1234") */
-function amount(v: unknown): number {
-  if (v === null || v === undefined || v === '') return 0;
-  if (typeof v === 'number') return v;
-  let s = String(v).trim();
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-  const n = Number(s.replace(/[^\d.-]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
-/** "05/10/2026", "2026-10-05", "05-10-2026 10:22:01" -> "2026-10-05" */
-function isoDate(v: unknown): string | null {
-  if (!v) return null;
-  const s = String(v).trim();
-  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(s);
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  return null;
-}
 
 /** Fila del SII (nombres "det…" del JSON o columnas del CSV del RCV) -> documento */
 function normalize(row: Record<string, unknown>, siiStatus: 'REGISTRO' | 'PENDIENTE'): Normalized | null {
@@ -99,14 +76,14 @@ function normalize(row: Record<string, unknown>, siiStatus: 'REGISTRO' | 'PENDIE
     }
     return undefined;
   };
-  const type = Number(pick('dettipodoc', 'tipodoc', 'tipodocumento', 'tipodte'));
+  const type = Number(pick('dettipodoc', 'tipodoc', 'tipodocumento', 'tipodte', 'dte'));
   const folio = pick('detnrodoc', 'folio', 'nrodoc');
   const rutBody = pick('detrutdoc', 'rutproveedor', 'rutemisor', 'rut');
   const dv = pick('detdvdoc', 'dvproveedor');
   const rut = siiRut(dv !== undefined && !String(rutBody).includes('-') ? `${rutBody}-${dv}` : String(rutBody ?? ''));
   if (!type || folio === undefined || !rut) return null;
-  const total = amount(pick('detmnttotal', 'montototal'));
-  const vat = amount(pick('detmntiva', 'montoivarecuperable', 'montoiva'));
+  const total = amount(pick('detmnttotal', 'montototal', 'total'));
+  const vat = amount(pick('detmntiva', 'montoivarecuperable', 'montoiva', 'iva'));
   return {
     key: `${type}-${rut}-${String(folio).trim()}`,
     type,
@@ -114,10 +91,10 @@ function normalize(row: Record<string, unknown>, siiStatus: 'REGISTRO' | 'PENDIE
     supplierRut: rut,
     supplierName: String(pick('detrznsoc', 'razonsocial', 'rznsoc') ?? rut).trim(),
     folio: String(folio).trim(),
-    issueDate: isoDate(pick('detfchdoc', 'fechadocto', 'fechadocumento', 'fchdoc')),
+    issueDate: isoDate(pick('detfchdoc', 'fechadocto', 'fechadocumento', 'fchdoc', 'fecha')),
     receivedAt: isoDate(pick('detfecrecepcion', 'fecharecepcion')),
-    exempt: Math.round(amount(pick('detmntexe', 'montoexento'))),
-    net: Math.round(amount(pick('detmntneto', 'montoneto'))),
+    exempt: Math.round(amount(pick('detmntexe', 'montoexento', 'exento'))),
+    net: Math.round(amount(pick('detmntneto', 'montoneto', 'neto'))),
     vat: Math.round(vat),
     total: Math.round(total),
     siiStatus,
@@ -154,6 +131,7 @@ export class PurchasesImportService {
         vat: sum(matched, (r) => r.vat),
         total: sum(matched, (r) => r.total),
         newCount: matched.filter((r) => r.erpStatus !== 'IMPORTADA').length,
+        retailerCount: matched.filter((r) => r.retailer).length,
       },
     };
   }
@@ -182,6 +160,7 @@ export class PurchasesImportService {
           siiStatus: d.siiStatus,
           siiImportedAt: new Date(),
           siiData: raw.get(d.key) ?? null,
+          retailerId: d.retailer?.id ?? null,
         };
         if (d.documentId) {
           // Ya estaba (a mano o importada antes): se completan los datos del SII
@@ -265,6 +244,15 @@ export class PurchasesImportService {
       select name, tax_id from suppliers
     `);
     const byRut = new Map(known.filter((k) => k.tax_id).map((k) => [k.tax_id!, k.name]));
+    // Retailers con RUT en la maestra
+    const { rows: retailerRows } = await this.db.execute<{ id: string; name: string; tax_id: string }>(sql`
+      select id, name, tax_id from retailers where tax_id is not null and tax_id <> ''
+    `);
+    const retailerByRut = new Map(
+      retailerRows
+        .map((r) => [siiRut(r.tax_id), { id: r.id, name: r.name }] as const)
+        .filter((e): e is readonly [string, { id: string; name: string }] => e[0] !== null),
+    );
     const used = new Set<string>();
 
     const result = documents.map(({ raw: _raw, ...d }) => {
@@ -284,6 +272,7 @@ export class PurchasesImportService {
         documentId: hit?.id ?? null,
         erpSupplier: hit?.supplier ?? byRut.get(d.supplierRut) ?? null,
         assignedNet: Math.round(hit?.assigned_net ?? 0),
+        retailer: retailerByRut.get(d.supplierRut) ?? null,
       };
     });
     // Un proveedor ingresado a mano con otro nombre queda ligado a su RUT por cualquiera de sus facturas

@@ -11,6 +11,7 @@ import {
   HandCoins,
   Percent,
   Undo2,
+  Truck,
   Boxes,
   FileSpreadsheet,
   FileUp,
@@ -57,6 +58,7 @@ const sections: NavSection[] = [
       { label: 'Ver ventas', href: '/ventas/listado', icon: List, ready: true },
       { label: 'Cargar archivos', href: '/ventas/cargas', icon: FileSpreadsheet, ready: true, edit: true },
       { label: 'Devoluciones', href: '/ventas/devoluciones', icon: Undo2, ready: true },
+      { label: 'Guías de despacho', href: '/ventas/guias', icon: Truck, ready: true },
     ],
   },
   {

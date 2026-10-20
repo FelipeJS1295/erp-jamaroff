@@ -1,11 +1,12 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Trash2, X } from 'lucide-react';
+import { FileText, Loader2, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useAuth } from './auth';
+import { InvoiceItemsPanel } from './invoice-items-panel';
 
 const clp = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString('es-CL')}`;
 const dmy = (d: string) => d.split('-').reverse().join('/');
@@ -172,6 +173,20 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
                 ))}
               </ul>
             </section>
+
+            {d.fromSii && (
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={api.purchasePdfUrl(d.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <FileText className="size-4" /> Ver PDF de la factura
+                </a>
+              </div>
+            )}
+            {d.fromSii && d.documentType === 33 && <InvoiceItemsPanel invoice={d} canEdit={canEdit} />}
 
             {/* Pagos */}
             <section>

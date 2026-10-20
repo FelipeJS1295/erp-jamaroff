@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
 import { SalesModule } from '../sales/sales.module.js';
+import { SettlementsModule } from '../settlements/settlements.module.js';
+import { GuidesService } from './guides.service.js';
+import { MipymeController } from './mipyme.controller.js';
+import { MipymeService } from './mipyme.service.js';
+import { PurchaseDocsService } from './purchase-docs.service.js';
 import { ApiGatewayClient } from './api-gateway.client.js';
 import { CreditNotesController } from './credit-notes.controller.js';
 import { CreditNotesService } from './credit-notes.service.js';
@@ -10,9 +15,9 @@ import { SiiService } from './sii.service.js';
 
 @Module({
   // Los datos del cliente y los montos de la orden salen de Ventas
-  imports: [SalesModule],
-  controllers: [SiiController, CreditNotesController, PurchasesImportController],
-  providers: [SiiService, ApiGatewayClient, CreditNotesService, PurchasesImportService],
+  imports: [SalesModule, SettlementsModule],
+  controllers: [SiiController, CreditNotesController, PurchasesImportController, MipymeController],
+  providers: [SiiService, ApiGatewayClient, CreditNotesService, PurchasesImportService, MipymeService, GuidesService, PurchaseDocsService],
   exports: [CreditNotesService],
 })
 export class SiiModule {}

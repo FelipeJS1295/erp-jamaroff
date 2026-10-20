@@ -227,6 +227,8 @@ export class ApiGatewayClient {
     receptorNombre: string;
     receptorDireccion?: string | null;
     receptorComuna?: string | null;
+    /** Giro del receptor (si la nota es para una factura) */
+    receptorGiro?: string | null;
     item: string;
     total: number;
     boletaTipo: number;
@@ -245,7 +247,7 @@ export class ApiGatewayClient {
         Receptor: {
           RUTRecep: input.receptorRut,
           RznSocRecep: cut(input.receptorNombre, 100),
-          GiroRecep: 'Particular',
+          GiroRecep: cut(input.receptorGiro || 'Particular', 40),
           ...(input.receptorDireccion ? { DirRecep: cut(input.receptorDireccion, 70) } : {}),
           ...(input.receptorComuna ? { CmnaRecep: cut(input.receptorComuna, 20) } : {}),
         },
@@ -261,6 +263,13 @@ export class ApiGatewayClient {
         },
       ],
     };
+    return this.crearBorrador(dte);
+  }
+
+  // ------------------------------- Portal MIPYME -------------------------------
+
+  /** Crea un borrador (factura, nota de crédito, guía…) en el Portal MIPYME. Se firma allá */
+  async crearBorrador(dte: Record<string, unknown>): Promise<{ draftCode: string; raw: unknown }> {
     const res = await this.post('/sii/mipyme/borradores/emitir', { dte });
     if (!res.ok) {
       const message = await this.errorMessage(res);
@@ -271,6 +280,114 @@ export class ApiGatewayClient {
     const code = body.data?.ehdr_codigo;
     if (!code) throw new SiiUnknownError('El Portal MIPYME no devolvió el código del borrador');
     return { draftCode: String(code), raw: body.data };
+  }
+
+  /** Borradores que siguen sin firmar en el portal (todas las páginas) */
+  async borradores(filtros: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
+    const { rut } = this.credentials();
+    return this.paginas(`/sii/mipyme/borradores/documentos/${rut}`, filtros);
+  }
+
+  /** Elimina un borrador del portal */
+  async eliminarBorrador(code: string): Promise<void> {
+    const { rut } = this.credentials();
+    const res = await this.post(`/sii/mipyme/borradores/eliminar/${rut}/${encodeURIComponent(code)}`, {});
+    if (!res.ok) throw new SiiRejectedError(await this.errorMessage(res));
+  }
+
+  /** Documentos emitidos en el Portal MIPYME entre dos fechas (AAAA-MM-DD) */
+  async emitidosMipyme(desde: string, hasta: string): Promise<Record<string, unknown>[]> {
+    const { rut } = this.credentials();
+    return this.paginas(`/sii/mipyme/emitidos/documentos/${rut}`, { FEC_DESDE: desde, FEC_HASTA: hasta });
+  }
+
+  /** Documentos recibidos (de proveedores) en el Portal MIPYME entre dos fechas */
+  async recibidosMipyme(desde: string, hasta: string): Promise<Record<string, unknown>[]> {
+    const { rut } = this.credentials();
+    return this.paginas(`/sii/mipyme/recibidos/documentos/${rut}`, { FEC_DESDE: desde, FEC_HASTA: hasta });
+  }
+
+  /** PDF de un documento emitido o recibido (por su código del portal) */
+  async pdfMipyme(kind: 'emitidos' | 'recibidos', code: string): Promise<Buffer> {
+    const { rut } = this.credentials();
+    const res = await this.post(`/sii/mipyme/${kind}/pdf/${rut}/${encodeURIComponent(code)}`, {}, 60000);
+    if (!res.ok) throw new SiiRejectedError(`No se pudo obtener el PDF: ${await this.errorMessage(res)}`);
+    return this.fileBody(res, 'pdf');
+  }
+
+  /** XML de un documento recibido (para leer sus productos) */
+  async xmlRecibido(emisorRut: string, dte: number, folio: string, fechaEmision: string): Promise<string> {
+    const { rut } = this.credentials();
+    const res = await this.post(
+      `/sii/mipyme/recibidos/xml/${rut}/${emisorRut}/${dte}/${encodeURIComponent(folio)}?fecha_emision=${fechaEmision}`,
+      {},
+      60000,
+    );
+    if (!res.ok) throw new SiiRejectedError(`No se pudo obtener el XML: ${await this.errorMessage(res)}`);
+    const buf = await this.fileBody(res, 'xml');
+    // Los XML del SII vienen en ISO-8859-1
+    const head = buf.subarray(0, 120).toString('latin1');
+    return /encoding="(ISO-8859-1|latin1|windows-1252)"/i.test(head) ? buf.toString('latin1') : buf.toString('utf8');
+  }
+
+  /** Razón social, direcciones y giros de un contribuyente (para la factura) */
+  async contribuyente(rutReceptor: string): Promise<{
+    razonSocial: string | null;
+    direcciones: { direccion: string; comuna: string }[];
+    actividades: { codigo: string; glosa: string }[];
+  }> {
+    const { rut } = this.credentials();
+    const res = await this.post(`/sii/mipyme/contribuyentes/info/${rutReceptor}/${rut}/33`, {});
+    if (!res.ok) throw new SiiRejectedError(await this.errorMessage(res));
+    const body = (await res.json()) as {
+      data?: { razon_social?: string; direcciones?: { direccion: string; comuna: string }[]; actividades?: { codigo: string; glosa: string }[] };
+    };
+    return {
+      razonSocial: body.data?.razon_social ?? null,
+      direcciones: body.data?.direcciones ?? [],
+      actividades: body.data?.actividades ?? [],
+    };
+  }
+
+  /** Registro de Ventas del SII: resumen del mes por tipo de documento */
+  async ventasResumen(periodo: string): Promise<Record<string, unknown>[]> {
+    const { rut } = this.credentials();
+    const res = await this.post(`/sii/rcv/ventas/resumen/${rut}/${periodo}?formato=json`, {}, 90000);
+    if (!res.ok) throw new SiiRejectedError(await this.errorMessage(res));
+    return findRows(await res.json());
+  }
+
+  /** Listados paginados del Portal MIPYME (100 por página) */
+  private async paginas(path: string, filtros: Record<string, unknown>, max = 20): Promise<Record<string, unknown>[]> {
+    const rows: Record<string, unknown>[] = [];
+    for (let page = 1; page <= max; page++) {
+      const res = await this.post(path, { filtros: { ...filtros, NUM_PAG: page } }, 90000);
+      if (!res.ok) {
+        const message = await this.errorMessage(res);
+        // Sin documentos, el portal a veces responde error
+        if (/no (existen|hay|se encontraron)|sin (datos|registros|documentos)/i.test(message)) break;
+        throw new SiiRejectedError(message);
+      }
+      const body = (await res.json()) as { data?: unknown; metadata?: { n_paginas?: number } };
+      const list = Array.isArray(body.data) ? (body.data as Record<string, unknown>[]) : findRows(body.data);
+      rows.push(...list);
+      const pages = Number(body.metadata?.n_paginas ?? 1);
+      if (!list.length || page >= pages) break;
+    }
+    return rows;
+  }
+
+  /** Archivo de la respuesta: binario directo o JSON con el contenido en base64 */
+  private async fileBody(res: Response, kind: 'pdf' | 'xml'): Promise<Buffer> {
+    const type = res.headers.get('content-type') ?? '';
+    if (type.includes('json')) {
+      const body = (await res.json()) as { data?: unknown };
+      const value = typeof body.data === 'string' ? body.data : JSON.stringify(body.data ?? '');
+      const b64 = value.replace(/^data:[^;]+;base64,/, '');
+      if (kind === 'xml' && value.trim().startsWith('<')) return Buffer.from(value, 'utf8');
+      return Buffer.from(b64, 'base64');
+    }
+    return Buffer.from(await res.arrayBuffer());
   }
 
   /**
