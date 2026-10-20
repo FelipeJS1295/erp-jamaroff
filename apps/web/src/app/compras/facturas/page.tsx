@@ -1,9 +1,11 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, RefreshCw, Search, Wallet } from 'lucide-react';
+import { CloudDownload, Loader2, RefreshCw, Search, Wallet } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useAuth } from '@/components/auth';
 import { INVOICE_STATUS, InvoiceDialog } from '@/components/invoice-dialog';
+import { SiiPurchasesDialog } from '@/components/sii-purchases-dialog';
 import { api, type PurchaseInvoice } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -28,6 +30,9 @@ export default function FacturasPage() {
   const [client, setClient] = useState('');
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [siiOpen, setSiiOpen] = useState(false);
+  const { canEdit } = useAuth();
+  const sii = useQuery({ queryKey: ['sii-status'], queryFn: api.siiStatus, staleTime: 5 * 60_000 });
 
   const all = useMemo(() => invoices.data ?? [], [invoices.data]);
 
@@ -75,9 +80,18 @@ export default function FacturasPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Facturas de proveedores</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Facturas agregadas desde la conciliación, con lo pagado y lo que falta pagar a cada proveedor.
+            Facturas traídas del SII o agregadas desde la conciliación, con lo pagado y lo que falta pagar a cada proveedor.
           </p>
         </div>
+        <div className="flex gap-2">
+        {canEdit && sii.data?.enabled && (
+          <button
+            onClick={() => setSiiOpen(true)}
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+          >
+            <CloudDownload className="size-4" /> Traer del SII
+          </button>
+        )}
         <button
           onClick={() => invoices.refetch()}
           className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm hover:bg-slate-50"
@@ -85,7 +99,9 @@ export default function FacturasPage() {
           <RefreshCw className={cn('size-4', invoices.isFetching && 'animate-spin')} />
           Actualizar
         </button>
+        </div>
       </header>
+      {siiOpen && <SiiPurchasesDialog onClose={() => setSiiOpen(false)} />}
 
       {invoices.isLoading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
@@ -95,8 +111,8 @@ export default function FacturasPage() {
         <p className="py-16 text-center text-sm text-red-600">{invoices.error.message}</p>
       ) : all.length === 0 ? (
         <div className="rounded-lg border border-slate-200 bg-white py-16 text-center text-sm text-slate-500">
-          Aún no hay facturas. Se agregan desde <strong>Conciliación</strong>: selecciona las órdenes y usa
-          &quot;Agregar documento&quot;.
+          Aún no hay facturas. Usa <strong>Traer del SII</strong> o agrégalas desde <strong>Conciliación</strong>: selecciona
+          las órdenes y usa &quot;Agregar documento&quot;.
         </div>
       ) : (
         <>
@@ -235,10 +251,29 @@ export default function FacturasPage() {
                   <tbody className="divide-y divide-slate-100">
                     {rows.map((i) => (
                       <tr key={i.id} className="hover:bg-slate-50">
-                        <td className="px-3 py-2.5 font-medium">{i.supplier}</td>
-                        <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{i.documentNumber}</td>
+                        <td className="px-3 py-2.5 font-medium">
+                          {i.supplier}
+                          {i.supplierRut && <span className="block text-xs font-normal text-slate-400">{i.supplierRut}</span>}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">
+                          {i.documentNumber}
+                          {i.documentType !== 33 && (
+                            <span className="block font-sans text-[11px] text-violet-700">
+                              {i.status === 'NOTA_CREDITO' ? 'Nota de crédito' : i.documentType === 34 ? 'Exenta' : `Tipo ${i.documentType}`}
+                            </span>
+                          )}
+                          {i.fromSii && <span className="block font-sans text-[11px] text-sky-600" title="Montos del Registro de Compras del SII">SII</span>}
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-600">{i.clients.join(', ') || <span className="text-slate-300">—</span>}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">{dmy(i.issueDate)}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{i.orders}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">
+                          {i.orders}
+                          {i.fromSii && i.status !== 'NOTA_CREDITO' && i.assignedNet < i.net && (
+                            <span className="block text-xs whitespace-nowrap text-amber-600" title="Neto de la factura que aún no se asigna a órdenes">
+                              falta {clp(i.net - i.assignedNet)}
+                            </span>
+                          )}
+                        </td>
                         <td className="border-l border-slate-100 px-3 py-2.5 text-right tabular-nums">{clp(i.net)}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{clp(i.vat)}</td>
                         <td className="px-3 py-2.5 text-right font-medium tabular-nums">{clp(i.total)}</td>

@@ -12,10 +12,15 @@ export const suppliers = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     name: varchar('name', { length: 200 }).notNull(),
+    /** RUT del proveedor (12345678-9). Se completa al traer sus facturas del SII */
+    taxId: varchar('tax_id', { length: 12 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   // Sin duplicados aunque cambien mayúsculas/minúsculas ("Muebles Sur" = "muebles sur")
-  (t) => [uniqueIndex('suppliers_name_uq').on(sql`lower(${t.name})`)],
+  (t) => [
+    uniqueIndex('suppliers_name_uq').on(sql`lower(${t.name})`),
+    uniqueIndex('suppliers_tax_id_uq').on(t.taxId).where(sql`${t.taxId} is not null`),
+  ],
 );
 
 /**
@@ -33,10 +38,25 @@ export const purchaseDocuments = pgTable(
     documentNumber: varchar('document_number', { length: 50 }).notNull(),
     /** Fecha de emisión de la factura (define el mes del IVA crédito) */
     issueDate: date('issue_date'),
+    /** Tipo SII: 33 factura · 34 exenta · 46 compra · 56 nota de débito · 61 nota de crédito */
+    documentType: integer('document_type').notNull().default(33),
+    /**
+     * Montos del documento según el Registro de Compras del SII (con signo positivo).
+     * Si están, mandan sobre la suma de las órdenes asignadas.
+     */
+    siiExempt: numeric('sii_exempt', { precision: 14, scale: 2 }),
+    siiNet: numeric('sii_net', { precision: 14, scale: 2 }),
+    siiVat: numeric('sii_vat', { precision: 14, scale: 2 }),
+    siiTotal: numeric('sii_total', { precision: 14, scale: 2 }),
+    /** Estado en el RCV: REGISTRO, PENDIENTE, RECLAMADO, NO_INCLUIR */
+    siiStatus: varchar('sii_status', { length: 20 }),
+    siiImportedAt: timestamp('sii_imported_at', { withTimezone: true }),
+    siiData: jsonb('sii_data'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('purchase_documents_supplier_number_uq').on(t.supplierId, t.documentNumber)],
+  // Una factura y una nota de crédito del mismo proveedor pueden tener el mismo N°
+  (t) => [uniqueIndex('purchase_documents_supplier_number_uq').on(t.supplierId, t.documentType, t.documentNumber)],
 );
 
 /**

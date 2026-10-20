@@ -69,13 +69,17 @@ export class VatService {
         from credit_notes n join retailers r on r.id = n.retailer_id
         where n.status in ('EMITIDA', 'REGISTRADA')
         union all
-        -- Facturas de proveedores (neto -> con IVA)
+        -- Facturas de proveedores: montos del SII si se trajeron del RCV; si no, neto de las órdenes -> con IVA.
+        -- Las notas de crédito del proveedor (60/61) restan.
         select coalesce(d.issue_date, (d.created_at at time zone 'America/Santiago')::date), 'COMPRA', sp.name,
-          d.document_number, null, round(sum(pl.amount_net) * 1.19), round(sum(pl.amount_net) * 0.19)
+          d.document_number,
+          case when d.document_type in (60, 61) then 'Nota de crédito' when d.document_type = 34 then 'Exenta' end,
+          (case when d.document_type in (60, 61) then -1 else 1 end) * coalesce(d.sii_total, round(l.net * 1.19)),
+          (case when d.document_type in (60, 61) then -1 else 1 end) * coalesce(d.sii_vat, round(l.net * 0.19))
         from purchase_documents d
         join suppliers sp on sp.id = d.supplier_id
-        join purchase_document_lines pl on pl.document_id = d.id
-        group by d.id, sp.name
+        left join lateral (select sum(amount_net) as net from purchase_document_lines pl where pl.document_id = d.id) l on true
+        where d.sii_total is not null or l.net is not null
         union all
         -- Comisiones y cargos de envío/logística cobrados en las liquidaciones (negativos)
         select sr.transaction_date,

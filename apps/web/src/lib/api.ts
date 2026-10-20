@@ -220,8 +220,45 @@ export interface PurchaseInvoice {
   paid: number;
   /** Lo que falta pagar */
   balance: number;
-  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA';
+  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA' | 'NOTA_CREDITO';
+  /** Tipo SII: 33 factura, 34 exenta, 61 nota de crédito… */
+  documentType: number;
+  supplierRut: string | null;
+  /** Traída del Registro de Compras del SII (montos del SII) */
+  fromSii: boolean;
+  siiStatus: string | null;
+  /** Neto ya asignado a órdenes */
+  assignedNet: number;
   lastPaymentAt: string | null;
+}
+
+/** Documento del Registro de Compras del SII comparado con el ERP */
+export interface SiiPurchase {
+  key: string;
+  type: number;
+  typeLabel: string;
+  supplierRut: string;
+  supplierName: string;
+  folio: string;
+  issueDate: string | null;
+  receivedAt: string | null;
+  exempt: number;
+  net: number;
+  vat: number;
+  total: number;
+  siiStatus: 'REGISTRO' | 'PENDIENTE';
+  /** NUEVA: no está · COINCIDE: se ingresó a mano · IMPORTADA: ya se trajo */
+  erpStatus: 'NUEVA' | 'COINCIDE' | 'IMPORTADA';
+  documentId: string | null;
+  erpSupplier: string | null;
+  assignedNet: number;
+}
+
+export interface SiiPurchasesPreview {
+  month: string;
+  warnings: string[];
+  documents: SiiPurchase[];
+  totals: { count: number; net: number; vat: number; total: number; newCount: number };
 }
 
 export interface PurchaseInvoiceDetail extends PurchaseInvoice {
@@ -886,6 +923,12 @@ export const api = {
     ),
     /** Facturas de proveedores y sus pagos */
   listInvoices: () => request<PurchaseInvoice[]>('/purchases/invoices'),
+  siiPurchases: (month: string) => request<SiiPurchasesPreview>(`/sii/compras?month=${month}`),
+  importSiiPurchases: (month: string, keys: string[]) =>
+    request<{ created: number; linked: number; updated: number }>('/sii/compras/importar', {
+      method: 'POST',
+      body: JSON.stringify({ month, keys }),
+    }),
   getInvoice: (id: string) => request<PurchaseInvoiceDetail>(`/purchases/invoices/${id}`),
   setInvoiceDate: (id: string, issueDate: string) =>
     request<{ ok: boolean }>(`/purchases/invoices/${id}`, { method: 'PATCH', body: JSON.stringify({ issueDate }) }),

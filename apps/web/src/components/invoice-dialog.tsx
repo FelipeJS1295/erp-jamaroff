@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useAuth } from './auth';
 
-const clp = (n: number) => `$${Math.round(n).toLocaleString('es-CL')}`;
+const clp = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString('es-CL')}`;
 const dmy = (d: string) => d.split('-').reverse().join('/');
 /** Fecha local de hoy en AAAA-MM-DD */
 const today = () => new Date().toLocaleDateString('sv-SE');
@@ -22,7 +22,8 @@ function parseAmount(text: string): number | null {
 
 const METHODS = ['Transferencia', 'Efectivo', 'Cheque', 'Tarjeta', 'Otro'];
 
-export const INVOICE_STATUS: Record<'PENDIENTE' | 'PARCIAL' | 'PAGADA', { label: string; badge: string }> = {
+export const INVOICE_STATUS: Record<'PENDIENTE' | 'PARCIAL' | 'PAGADA' | 'NOTA_CREDITO', { label: string; badge: string }> = {
+  NOTA_CREDITO: { label: 'Nota de crédito', badge: 'bg-violet-50 text-violet-700' },
   PENDIENTE: { label: 'Por pagar', badge: 'bg-red-50 text-red-700' },
   PARCIAL: { label: 'Abonada', badge: 'bg-amber-50 text-amber-700' },
   PAGADA: { label: 'Pagada', badge: 'bg-emerald-50 text-emerald-700' },
@@ -91,7 +92,7 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold">
-              Factura N° {d?.documentNumber ?? '…'}
+              {d?.status === 'NOTA_CREDITO' ? 'Nota de crédito' : 'Factura'} N° {d?.documentNumber ?? '…'}
               {d && (
                 <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', INVOICE_STATUS[d.status].badge)}>
                   {INVOICE_STATUS[d.status].label}
@@ -100,9 +101,16 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
             </h2>
             <p className="text-xs text-slate-500">
                 {d
-                ? `${d.supplier} · cliente ${d.clients.join(', ') || '—'} · ingresada el ${dmy(d.createdAt)}`
+                ? `${d.supplier}${d.supplierRut ? ` (${d.supplierRut})` : ''} · cliente ${d.clients.join(', ') || '—'} · ingresada el ${dmy(d.createdAt)}`
                 : 'Cargando…'}
             </p>
+            {d?.fromSii && (
+              <p className="mt-0.5 text-xs text-sky-700">
+                Montos según el Registro de Compras del SII{d.siiStatus === 'PENDIENTE' ? ' (aún pendiente de aceptar)' : ''}.
+                {d.status !== 'NOTA_CREDITO' &&
+                  ` Asignado a órdenes: neto ${clp(d.assignedNet)} de ${clp(d.net)}${d.assignedNet < d.net ? ` (faltan ${clp(d.net - d.assignedNet)})` : ''}.`}
+              </p>
+            )}
             {d && (
               <label className="mt-1 flex items-center gap-2 text-xs text-slate-600">
                 Fecha de la factura:

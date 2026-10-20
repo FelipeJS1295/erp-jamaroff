@@ -113,6 +113,13 @@
       "when": 1792521750639,
       "tag": "0015_nc_devoluciones_cxc_iva",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792525191650,
+      "tag": "0016_compras_sii",
+      "breakpoints": true
     }
   ]
 }

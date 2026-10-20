@@ -273,6 +273,27 @@ export class ApiGatewayClient {
     return { draftCode: String(code), raw: body.data };
   }
 
+  /**
+   * Registro de Compras (RCV) de un mes: los documentos que los proveedores le
+   * emitieron a la empresa. Devuelve las filas tal como vienen del SII.
+   *  - REGISTRO: aceptadas (o con 8 días cumplidos), todas las clases de documento.
+   *  - PENDIENTE: recibidas hace menos de 8 días, aún sin aceptar (solo facturas 33).
+   */
+  async comprasRcv(periodo: string, estado: 'REGISTRO' | 'PENDIENTE'): Promise<Record<string, unknown>[]> {
+    const { rut } = this.credentials();
+    const path =
+      estado === 'REGISTRO'
+        ? `/sii/rcv/compras/detalle/${rut}/${periodo}/0/REGISTRO?tipo=rcv_csv&formato=json`
+        : `/sii/rcv/compras/detalle/${rut}/${periodo}/33/PENDIENTE?tipo=rcv&formato=json`;
+    const res = await this.post(path, {}, 120000);
+    if (!res.ok) {
+      const message = await this.errorMessage(res);
+      this.logger.warn(`RCV compras ${estado} ${periodo} ${res.status}: ${message}`);
+      throw new SiiRejectedError(message);
+    }
+    return findRows(await res.json());
+  }
+
   /** PDF de una boleta ya emitida */
   async pdfBoleta(folio: number, dte: number, fecha: string): Promise<Buffer> {
     const { rut } = this.credentials();
@@ -284,4 +305,27 @@ export class ApiGatewayClient {
     if (!res.ok) throw new BadGatewayException(`No se pudo obtener el PDF: ${await this.errorMessage(res)}`);
     return Buffer.from(await res.arrayBuffer());
   }
+}
+
+/**
+ * Busca en la respuesta la lista de documentos (la forma exacta del JSON puede
+ * variar: { data: [...] }, { data: { detalle: [...] } }, [...]).
+ */
+function findRows(body: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 4 || body === null || typeof body !== 'object') return [];
+  if (Array.isArray(body)) {
+    if (body.length === 0) return [];
+    if (body.every((x) => x && typeof x === 'object' && !Array.isArray(x))) return body as Record<string, unknown>[];
+    return [];
+  }
+  const obj = body as Record<string, unknown>;
+  for (const key of ['data', 'detalle', 'documentos', 'registros', 'items']) {
+    const rows = findRows(obj[key], depth + 1);
+    if (rows.length) return rows;
+  }
+  for (const value of Object.values(obj)) {
+    const rows = findRows(value, depth + 1);
+    if (rows.length) return rows;
+  }
+  return [];
 }

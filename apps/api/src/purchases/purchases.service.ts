@@ -10,6 +10,9 @@ import {
   suppliers,
 } from '../database/schema/index.js';
 
+/** Notas de crédito (restan) */
+const isCreditNoteType = (type: number) => type === 60 || type === 61;
+
 /** IVA Chile */
 export const VAT_RATE = 1.19;
 
@@ -53,8 +56,17 @@ export interface PurchaseInvoice {
   paid: number;
   /** Lo que falta pagar */
   balance: number;
-  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA';
+  status: 'PENDIENTE' | 'PARCIAL' | 'PAGADA' | 'NOTA_CREDITO';
   lastPaymentAt: string | null;
+  /** Tipo SII: 33 factura, 34 exenta, 61 nota de crédito… */
+  documentType: number;
+  supplierRut: string | null;
+  /** Traída del Registro de Compras del SII (los montos son los del SII) */
+  fromSii: boolean;
+  /** Estado en el RCV (REGISTRO, PENDIENTE…) */
+  siiStatus: string | null;
+  /** Neto asignado a órdenes (para ver cuánto falta asignar) */
+  assignedNet: number;
 }
 
 export interface PurchaseInvoiceDetail extends PurchaseInvoice {
@@ -135,6 +147,7 @@ export class PurchasesService {
         .where(
           and(
             eq(purchaseDocuments.supplierId, supplier.id),
+            eq(purchaseDocuments.documentType, 33),
             eq(purchaseDocuments.documentNumber, input.documentNumber),
           ),
         );
@@ -179,7 +192,12 @@ export class PurchasesService {
         .select({ remaining: sql<number>`count(*)::int` })
         .from(purchaseDocumentLines)
         .where(eq(purchaseDocumentLines.documentId, line.documentId));
-      if (remaining === 0) {
+      const [doc] = await tx
+        .select({ fromSii: sql<boolean>`${purchaseDocuments.siiImportedAt} is not null` })
+        .from(purchaseDocuments)
+        .where(eq(purchaseDocuments.id, line.documentId));
+      // Las traídas del SII se quedan aunque no tengan órdenes
+      if (remaining === 0 && !doc?.fromSii) {
         // Si la factura ya tiene pagos, no se puede quedar sin órdenes (se perderían los pagos)
         const [{ payments }] = await tx
           .select({ payments: sql<number>`count(*)::int` })
@@ -192,7 +210,7 @@ export class PurchasesService {
         }
         await tx.delete(purchaseDocuments).where(eq(purchaseDocuments.id, line.documentId));
       }
-      return { deleted: true, documentDeleted: remaining === 0 };
+      return { deleted: true, documentDeleted: remaining === 0 && !doc?.fromSii };
     });
   }
 
@@ -212,9 +230,18 @@ export class PurchasesService {
       total: number;
       paid: number;
       last_payment_at: string | null;
+      document_type: number;
+      tax_id: string | null;
+      sii_total: number | null;
+      sii_net: number | null;
+      sii_exempt: number | null;
+      sii_vat: number | null;
+      sii_status: string | null;
     }>(sql`
       select
-        d.id, d.supplier_id, s.name as supplier, d.document_number,
+        d.id, d.supplier_id, s.name as supplier, d.document_number, d.document_type, s.tax_id,
+        d.sii_total::float8 as sii_total, d.sii_net::float8 as sii_net, d.sii_exempt::float8 as sii_exempt,
+        d.sii_vat::float8 as sii_vat, d.sii_status,
         (d.created_at at time zone 'America/Santiago')::date::text as created_at,
         coalesce(d.issue_date, (d.created_at at time zone 'America/Santiago')::date)::text as issue_date,
         l.client_codes, l.client_names,
@@ -243,8 +270,12 @@ export class PurchasesService {
       order by d.created_at desc
     `);
     return rows.map((r) => {
-      const net = Math.round(r.net);
-      const total = Math.round(r.total);
+      // Con datos del SII mandan sus montos; si no, la suma de las órdenes asignadas
+      const fromSii = r.sii_total !== null;
+      const sign = isCreditNoteType(r.document_type) ? -1 : 1;
+      const net = sign * Math.round(fromSii ? (r.sii_net ?? 0) + (r.sii_exempt ?? 0) : r.net);
+      const total = sign * Math.round(fromSii ? r.sii_total! : r.total);
+      const vat = fromSii ? sign * Math.round(r.sii_vat ?? 0) : total - net;
       const paid = Math.round(r.paid);
       const balance = total - paid;
       return {
@@ -257,12 +288,17 @@ export class PurchasesService {
         issueDate: r.issue_date,
         orders: r.orders,
         net,
-        vat: total - net,
+        vat,
         total,
         paid,
         balance,
-        status: paid <= 0 ? 'PENDIENTE' : balance > 0 ? 'PARCIAL' : 'PAGADA',
+        status: sign < 0 ? 'NOTA_CREDITO' : total > 0 && paid <= 0 ? 'PENDIENTE' : balance > 0 ? 'PARCIAL' : 'PAGADA',
         lastPaymentAt: r.last_payment_at,
+        documentType: r.document_type,
+        supplierRut: r.tax_id,
+        fromSii,
+        siiStatus: r.sii_status,
+        assignedNet: Math.round(r.net),
       };
     });
   }
