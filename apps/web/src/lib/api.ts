@@ -531,6 +531,12 @@ export const api = {
   emitBoletas: (orders: { retailerCode: string; orderNumber: string }[]) =>
     request<BoletasLote>('/sii/boletas/lote', { method: 'POST', body: JSON.stringify({ orders }) }),
   /** PDF de una boleta emitida (se abre en otra pestaña con la cookie de sesión) */
+  /** Nombre del PDF (sin .pdf): Falabella "<N° orden>_<N° boleta>", resto "<N° orden>" */
+  boletaFileName: (sale: SaleRow, receiptNumber?: string | number | null) => {
+    const order = (sale.orderLabel ?? sale.orderNumber ?? 'orden').replace(/[^\w.-]+/g, '_');
+    const number = receiptNumber ?? sale.receipt?.number;
+    return sale.retailerCode.toUpperCase() === 'FALABELLA' && number ? `${order}_${number}` : order;
+  },
   boletaPdfUrl: (receiptId: string, orderLabel?: string | null) =>
     `${API_URL}/sii/boletas/${receiptId}/pdf${orderLabel ? `/${encodeURIComponent(orderLabel.replace(/[^\w.-]+/g, '_'))}.pdf` : ''}`,
 

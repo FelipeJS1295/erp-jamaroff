@@ -2,16 +2,14 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Download, FolderOpen, Loader2, X, XCircle } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { api, type SaleRow } from '@/lib/api';
 import {
   canSaveToFolders,
   chooseBaseFolder,
   documentFolders,
   downloadWithPathName,
-  getBaseFolder,
   saveInFolders,
-  savedBaseFolder,
 } from '@/lib/doc-folders';
 
 const todayCL = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
@@ -20,6 +18,8 @@ const todayCL = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sant
 interface Job {
   sale: SaleRow;
   receiptId: string;
+  /** N° (folio) de la boleta, para el nombre del archivo de Falabella */
+  receiptNumber: string;
   issuedAt: string | null;
 }
 
@@ -60,44 +60,55 @@ export function DownloadBoletasDialog({
 
   const [generate, setGenerate] = useState(siiEnabled && groups.missing.length > 0);
   const [folderName, setFolderName] = useState<string | null>(null);
+  // Crear subcarpetas Boletas <año>\Boletas <retailer>\<Mes> dentro de la carpeta elegida (se recuerda)
+  const [subfolders, setSubfolders] = useState(() => {
+    try {
+      return localStorage.getItem('boletas-subcarpetas') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleSubfolders = (v: boolean) => {
+    setSubfolders(v);
+    try {
+      localStorage.setItem('boletas-subcarpetas', v ? '1' : '0');
+    } catch {
+      /* sin almacenamiento */
+    }
+  };
   const [phase, setPhase] = useState<'review' | 'working' | 'done'>('review');
   const [progress, setProgress] = useState('');
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [error, setError] = useState<string | null>(null);
   const folders = canSaveToFolders();
 
-  useEffect(() => {
-    savedBaseFolder().then((h) => setFolderName(h?.name ?? null));
-  }, []);
-
   const total = groups.withPdf.length + (generate ? groups.missing.length : 0);
-
-  const changeFolder = async () => {
-    try {
-      const h = await chooseBaseFolder();
-      setFolderName(h.name);
-    } catch {
-      /* el usuario canceló */
-    }
-  };
+  // Ejemplo de nombre de archivo para mostrar
+  const sample = groups.withPdf[0] ?? groups.missing[0] ?? sales[0];
+  const sampleName = sample ? `${api.boletaFileName(sample, sample.receipt?.number ?? (sample.retailerCode.toUpperCase() === 'FALABELLA' ? 'N°boleta' : null))}.pdf` : 'N° orden.pdf';
 
   const run = async () => {
     setError(null);
-    // 1. Carpeta (tiene que ser en el mismo clic: el navegador lo exige)
-    let base: Awaited<ReturnType<typeof getBaseFolder>> | null = null;
+    // 1. Preguntar la carpeta cada vez (tiene que ser en el mismo clic: el navegador lo exige)
+    let base: Awaited<ReturnType<typeof chooseBaseFolder>> | null = null;
     if (folders) {
       try {
-        base = await getBaseFolder();
+        base = await chooseBaseFolder();
         setFolderName(base.name);
       } catch {
-        setError('No se eligió carpeta. Vuelve a intentar y elige, por ejemplo, Documentos.');
+        setError('No se eligió carpeta. Presiona Descargar de nuevo y elige dónde guardar.');
         return;
       }
     }
 
     setPhase('working');
     const results: Outcome[] = [];
-    const jobs: Job[] = groups.withPdf.map((s) => ({ sale: s, receiptId: s.receipt!.id, issuedAt: s.receipt!.issuedAt }));
+    const jobs: Job[] = groups.withPdf.map((s) => ({
+      sale: s,
+      receiptId: s.receipt!.id,
+      receiptNumber: s.receipt!.number,
+      issuedAt: s.receipt!.issuedAt,
+    }));
 
     // 2. Emitir las que faltan (si se pidió)
     if (generate && groups.missing.length > 0) {
@@ -109,7 +120,7 @@ export function DownloadBoletasDialog({
           const lote = await api.emitBoletas(chunk.map((s) => ({ retailerCode: s.retailerCode, orderNumber: s.orderNumber! })));
           for (const r of lote.results) {
             const sale = chunk.find((s) => s.orderNumber === r.orderNumber)!;
-            if (r.ok) jobs.push({ sale, receiptId: r.id, issuedAt: r.issuedAt });
+            if (r.ok) jobs.push({ sale, receiptId: r.id, receiptNumber: String(r.folio), issuedAt: r.issuedAt });
             else results.push({ label: orderOf(sale), ok: false, detail: `No se emitió: ${r.error}` });
           }
           // Se detuvo por un error de configuración/credenciales: no seguir con más lotes
@@ -124,10 +135,11 @@ export function DownloadBoletasDialog({
     // 3. Bajar cada PDF y guardarlo en su carpeta
     for (const [i, job] of jobs.entries()) {
       const label = orderOf(job.sale);
+      const fileName = `${api.boletaFileName(job.sale, job.receiptNumber)}.pdf`;
       setProgress(`Guardando ${i + 1} de ${jobs.length}…`);
-      const path = documentFolders('Boletas', job.sale.retailer, job.issuedAt);
+      const path = subfolders ? documentFolders('Boletas', job.sale.retailer, job.issuedAt) : [];
       try {
-        const res = await fetch(api.boletaPdfUrl(job.receiptId, label), { credentials: 'include' });
+        const res = await fetch(api.boletaPdfUrl(job.receiptId, fileName.slice(0, -4)), { credentials: 'include' });
         if (!res.ok) {
           let msg = `Error ${res.status}`;
           try {
@@ -138,9 +150,9 @@ export function DownloadBoletasDialog({
           throw new Error(msg);
         }
         const pdf = await res.blob();
-        if (base) await saveInFolders(base, path, `${label}.pdf`, pdf);
-        else downloadWithPathName(path, `${label}.pdf`, pdf);
-        results.push({ label, ok: true, detail: `${path.join('\\')}\\${label}.pdf` });
+        if (base) await saveInFolders(base, path, fileName, pdf);
+        else downloadWithPathName(path, fileName, pdf);
+        results.push({ label, ok: true, detail: [base?.name ?? 'Descargas', ...path, fileName].join('\\') });
       } catch (err) {
         results.push({ label, ok: false, detail: (err as Error).message });
       }
@@ -216,22 +228,25 @@ export function DownloadBoletasDialog({
                 )}
               </ul>
 
-              <div className="rounded-md border border-slate-200 px-3 py-2 text-sm">
+              <div className="space-y-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
                 {folders ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <FolderOpen className="size-4 shrink-0 text-brand-600" />
-                      <span className="truncate">
-                        Se guardan en <b>{folderName ?? '(eliges la carpeta al descargar)'}</b>
+                  <>
+                    <p className="flex items-start gap-2">
+                      <FolderOpen className="mt-0.5 size-4 shrink-0 text-brand-600" />
+                      <span>
+                        Al presionar <b>Descargar</b>, Chrome te pregunta <b>en qué carpeta</b> guardarlas.
                         <span className="block text-xs text-slate-500">
-                          …\{documentFolders('Boletas', sales[0]?.retailer ?? 'Walmart', todayCL()).join('\\')}\N° orden.pdf
+                          Ej: {subfolders
+                            ? `…\\${documentFolders('Boletas', sample?.retailer ?? 'Falabella', todayCL()).join('\\')}\\${sampleName}`
+                            : `…\\<carpeta elegida>\\${sampleName}`}
                         </span>
                       </span>
-                    </span>
-                    <button onClick={changeFolder} className="shrink-0 text-xs font-medium text-brand-600 hover:underline">
-                      {folderName ? 'Cambiar' : 'Elegir'}
-                    </button>
-                  </div>
+                    </p>
+                    <label className="flex items-center gap-2 text-xs text-slate-700">
+                      <input type="checkbox" checked={subfolders} onChange={(e) => toggleSubfolders(e.target.checked)} className="accent-brand-600" />
+                      Ordenar en subcarpetas por año, retailer y mes (Boletas 2026\Boletas Falabella\Octubre)
+                    </label>
+                  </>
                 ) : (
                   <p className="text-slate-600">
                     Este navegador no puede guardar en carpetas (usa Chrome o Edge). Se descargarán con la carpeta en el nombre, ej:{' '}
@@ -239,11 +254,8 @@ export function DownloadBoletasDialog({
                   </p>
                 )}
               </div>
-              {folders && !folderName && (
-                <p className="text-xs text-slate-500">
-                  La primera vez Chrome te pide elegir la carpeta (elige <b>Documentos</b>) y permitir que el ERP guarde archivos
-                  ahí. Después la recuerda.
-                </p>
+              {folders && (
+                <p className="text-xs text-slate-500">Chrome también te pide permiso para que el ERP guarde archivos en esa carpeta.</p>
               )}
 
               {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

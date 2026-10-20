@@ -106,9 +106,14 @@ export async function saveInFolders(base: DirHandle, folders: string[], fileName
 /** Plan B (sin acceso a carpetas): descarga normal con la ruta en el nombre */
 export function downloadWithPathName(folders: string[], fileName: string, data: Blob) {
   // ["Boletas 2026", "Boletas Walmart", "Octubre"] -> "Boletas 2026 - Walmart - Octubre - 123.pdf"
+  if (folders.length === 0) return triggerDownload(safeFileName(fileName), data);
   const [first = '', ...rest] = folders;
   const kind = first.split(' ')[0];
   const name = safeFileName([first, ...rest.map((f) => f.replace(new RegExp(`^${kind} `), '')), fileName].join(' - '));
+  triggerDownload(name, data);
+}
+
+function triggerDownload(name: string, data: Blob) {
   const url = URL.createObjectURL(data);
   const a = document.createElement('a');
   a.href = url;

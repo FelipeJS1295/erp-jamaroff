@@ -220,7 +220,7 @@ export class SiiService {
    * N° de orden de compra como se ve en Ventas (Walmart: el del cliente, no la PO "P…"),
    * limpio para usarlo como nombre de archivo.
    */
-  private async orderLabel(retailerId: string, orderNumber: string): Promise<string> {
+  private async orderLabel(retailerId: string, orderNumber: string): Promise<{ code: string | null; label: string }> {
     const [row] = await this.db
       .select({ code: retailers.code, orderId: sql<string | null>`min(${salesRecords.orderId})` })
       .from(retailers)
@@ -228,7 +228,7 @@ export class SiiService {
       .where(eq(retailers.id, retailerId))
       .groupBy(retailers.code);
     const label = row && showsCustomerOrderId(row.code) ? (row.orderId ?? orderNumber) : orderNumber;
-    return label.replace(/[^\w.-]+/g, '_');
+    return { code: row?.code ?? null, label: label.replace(/[^\w.-]+/g, '_') };
   }
 
   /** PDF de una boleta emitida desde el sistema (el archivo se llama como la orden de compra) */
@@ -236,7 +236,9 @@ export class SiiService {
     const [r] = await this.db.select().from(customerReceipts).where(eq(customerReceipts.id, receiptId));
     if (!r) throw new NotFoundException('La boleta no existe');
     if (r.status !== 'EMITIDA') throw new BadRequestException('Esta boleta no se emitió desde el sistema');
-    const fileName = `${await this.orderLabel(r.retailerId, r.orderNumber)}.pdf`;
+    // Falabella: "<N° orden>_<N° documento>.pdf" · resto: "<N° orden>.pdf"
+    const { code, label } = await this.orderLabel(r.retailerId, r.orderNumber);
+    const fileName = code === 'FALABELLA' ? `${label}_${r.receiptNumber}.pdf` : `${label}.pdf`;
     if (r.pdfData) return { data: Buffer.from(r.pdfData, 'base64'), fileName };
     const data = await this.gateway.pdfBoleta(Number(r.receiptNumber), r.documentType, r.issuedAt ?? todayCL());
     await this.db.update(customerReceipts).set({ pdfData: data.toString('base64') }).where(eq(customerReceipts.id, r.id));
