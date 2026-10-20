@@ -523,7 +523,8 @@ export const api = {
   emitBoletas: (orders: { retailerCode: string; orderNumber: string }[]) =>
     request<BoletasLote>('/sii/boletas/lote', { method: 'POST', body: JSON.stringify({ orders }) }),
   /** PDF de una boleta emitida (se abre en otra pestaña con la cookie de sesión) */
-  boletaPdfUrl: (receiptId: string) => `${API_URL}/sii/boletas/${receiptId}/pdf`,
+  boletaPdfUrl: (receiptId: string, orderLabel?: string | null) =>
+    `${API_URL}/sii/boletas/${receiptId}/pdf${orderLabel ? `/${encodeURIComponent(orderLabel.replace(/[^\w.-]+/g, '_'))}.pdf` : ''}`,
 
   /** Retailers cuyos archivos de ventas se pueden cargar */
   importRetailers: () => request<ImportRetailer[]>('/sales/import/retailers'),

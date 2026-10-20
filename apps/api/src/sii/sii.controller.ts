@@ -59,11 +59,14 @@ export class SiiController {
     return this.sii.emitirVarias(orders, user?.id ?? null);
   }
 
-  @Get('boletas/:id/pdf')
+  // El nombre al final de la URL (ej: .../pdf/3257781501.pdf) es para que el navegador
+  // muestre y guarde el archivo con el N° de orden de compra
+  @Get(['boletas/:id/pdf', 'boletas/:id/pdf/:file'])
   async pdf(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
     const { data, fileName } = await this.sii.pdf(id);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    // Se abre en el navegador; al descargarlo queda con el N° de orden de compra como nombre
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.send(data);
   }
 }

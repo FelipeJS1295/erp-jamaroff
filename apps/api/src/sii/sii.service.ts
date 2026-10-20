@@ -1,7 +1,8 @@
 import { BadGatewayException, BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../database/database.module.js';
-import { customerReceipts, retailers } from '../database/schema/index.js';
+import { customerReceipts, retailers, salesRecords } from '../database/schema/index.js';
+import { showsCustomerOrderId } from '../settlements/reconciliation.service.js';
 import { SalesService } from '../sales/sales.service.js';
 import { ApiGatewayClient, SiiRejectedError } from './api-gateway.client.js';
 import { RUT_GENERICO, siiRut } from './rut.js';
@@ -201,12 +202,27 @@ export class SiiService {
     };
   }
 
-  /** PDF de una boleta emitida desde el sistema */
+  /**
+   * N° de orden de compra como se ve en Ventas (Walmart: el del cliente, no la PO "P…"),
+   * limpio para usarlo como nombre de archivo.
+   */
+  private async orderLabel(retailerId: string, orderNumber: string): Promise<string> {
+    const [row] = await this.db
+      .select({ code: retailers.code, orderId: sql<string | null>`min(${salesRecords.orderId})` })
+      .from(retailers)
+      .leftJoin(salesRecords, and(eq(salesRecords.retailerId, retailers.id), eq(salesRecords.orderNumber, orderNumber)))
+      .where(eq(retailers.id, retailerId))
+      .groupBy(retailers.code);
+    const label = row && showsCustomerOrderId(row.code) ? (row.orderId ?? orderNumber) : orderNumber;
+    return label.replace(/[^\w.-]+/g, '_');
+  }
+
+  /** PDF de una boleta emitida desde el sistema (el archivo se llama como la orden de compra) */
   async pdf(receiptId: string): Promise<{ data: Buffer; fileName: string }> {
     const [r] = await this.db.select().from(customerReceipts).where(eq(customerReceipts.id, receiptId));
     if (!r) throw new NotFoundException('La boleta no existe');
     if (r.status !== 'EMITIDA') throw new BadRequestException('Esta boleta no se emitió desde el sistema');
-    const fileName = `boleta-${r.receiptNumber}.pdf`;
+    const fileName = `${await this.orderLabel(r.retailerId, r.orderNumber)}.pdf`;
     if (r.pdfData) return { data: Buffer.from(r.pdfData, 'base64'), fileName };
     const data = await this.gateway.pdfBoleta(Number(r.receiptNumber), r.documentType, r.issuedAt ?? todayCL());
     await this.db.update(customerReceipts).set({ pdfData: data.toString('base64') }).where(eq(customerReceipts.id, r.id));

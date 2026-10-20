@@ -62,7 +62,7 @@ export function EmitBoletaDialog({ sale, onClose }: { sale: SaleRow; onClose: ()
             <CheckCircle2 className="size-5" /> Boleta N° <b>{emit.data.folio}</b> emitida por {clp(emit.data.total)}
           </p>
           <div className="flex justify-end gap-2">
-            <a href={api.boletaPdfUrl(emit.data.id)} target="_blank" rel="noreferrer" className={btnSecondary + ' inline-flex items-center gap-1.5'}>
+            <a href={api.boletaPdfUrl(emit.data.id, sale.orderLabel ?? sale.orderNumber)} target="_blank" rel="noreferrer" className={btnSecondary + ' inline-flex items-center gap-1.5'}>
               <FileText className="size-4" /> Ver PDF
             </a>
             <button onClick={onClose} className={btnPrimary}>

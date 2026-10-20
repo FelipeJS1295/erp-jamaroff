@@ -286,7 +286,7 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
           {s.receipt?.status === 'EMITIDA' && (
             // Emitida en el SII desde el sistema: no se edita, se ve el PDF
             <a
-              href={api.boletaPdfUrl(s.receipt.id)}
+              href={api.boletaPdfUrl(s.receipt.id, s.orderLabel ?? s.orderNumber)}
               target="_blank"
               rel="noreferrer"
               title="Emitida en el SII · ver PDF"
