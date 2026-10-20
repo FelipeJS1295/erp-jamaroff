@@ -29,6 +29,10 @@ export interface BoletaPreview {
   /** El RUT del cliente no vino o no es válido: se usa el genérico */
   genericReceptor: boolean;
   existing: { id: string; number: string; status: string } | null;
+  /** Fecha de la orden (AAAA-MM-DD) */
+  orderDate: string | null;
+  /** Fecha con que se emite la boleta: la de la orden (si no hay, o es futura, hoy) */
+  issueDate: string;
 }
 
 @Injectable()
@@ -83,6 +87,13 @@ export class SiiService {
     const suffix = data.shippingTotal > 0 ? ' + despacho' : '';
     const item = names.length + suffix.length > ITEM_MAX ? `${names.slice(0, ITEM_MAX - suffix.length - 1)}…${suffix}` : `${names}${suffix}`;
     const rut = siiRut(data.customer.rut);
+    const retailerId = await this.retailerId(retailerCode);
+    const [dateRow] = await this.db
+      .select({ orderDate: sql<string | null>`min(${salesRecords.orderDate})::text` })
+      .from(salesRecords)
+      .where(and(eq(salesRecords.retailerId, retailerId), eq(salesRecords.orderNumber, orderNumber)));
+    const orderDate = dateRow?.orderDate?.slice(0, 10) ?? null;
+    const today = todayCL();
     return {
       retailerCode: retailerCode.toUpperCase(),
       orderNumber,
@@ -96,7 +107,9 @@ export class SiiService {
       receptorAddress: data.shipping.address,
       receptorCommune: data.shipping.commune,
       genericReceptor: !rut,
-      existing: await this.existing(await this.retailerId(retailerCode), orderNumber),
+      existing: await this.existing(retailerId, orderNumber),
+      orderDate,
+      issueDate: orderDate && orderDate <= today ? orderDate : today,
     };
   }
 
@@ -149,6 +162,7 @@ export class SiiService {
         receptorComuna: p.receptorCommune,
         item: p.item,
         total: p.total,
+        fecha: p.issueDate,
       });
       const [saved] = await this.db
         .update(customerReceipts)
@@ -156,14 +170,14 @@ export class SiiService {
           receiptNumber: String(result.folio),
           documentType: result.dte,
           status: 'EMITIDA',
-          issuedAt: todayCL(),
+          issuedAt: p.issueDate,
           pdfUrl: result.pdfUrl,
           pdfData: result.pdfBase64,
           siiResponse: result.raw,
         })
         .where(eq(customerReceipts.id, receiptId))
         .returning({ id: customerReceipts.id, number: customerReceipts.receiptNumber });
-      return { ok: true as const, id: saved.id, folio: result.folio, total: p.total, orderNumber };
+      return { ok: true as const, id: saved.id, folio: result.folio, total: p.total, orderNumber, issuedAt: p.issueDate };
     } catch (err) {
       const message = (err as Error).message;
       if (err instanceof SiiRejectedError) {

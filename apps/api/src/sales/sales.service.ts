@@ -45,6 +45,8 @@ export interface SaleWithMargin {
     totalGross: number;
     /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (desde el sistema, con PDF) · REVISAR */
     status: string;
+    /** Fecha de emisión en el SII (AAAA-MM-DD); null si se anotó a mano */
+    issuedAt: string | null;
   } | null;
   /** Neto que pagó el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
@@ -104,6 +106,7 @@ type SaleGroup = {
   receipt_number: string | null;
   receipt_total: number | null;
   receipt_status: string | null;
+  receipt_issued_at: string | null;
 };
 
 interface Money {
@@ -148,7 +151,8 @@ export class SalesService {
           min(cr.id::text) as receipt_id,
           min(cr.receipt_number) as receipt_number,
           min(cr.total_gross)::float8 as receipt_total,
-          min(cr.status) as receipt_status
+          min(cr.status) as receipt_status,
+          min(cr.issued_at)::text as receipt_issued_at
         from sales_records s
         join retailers r on r.id = s.retailer_id
         left join customer_receipts cr on cr.retailer_id = s.retailer_id and cr.order_number = s.order_number
@@ -204,6 +208,7 @@ export class SalesService {
                 number: g.receipt_number,
                 totalGross: Math.round(g.receipt_total),
                 status: g.receipt_status ?? 'REGISTRADA',
+                issuedAt: g.receipt_issued_at,
               }
             : null,
         settlementNet: round(settlementNet),

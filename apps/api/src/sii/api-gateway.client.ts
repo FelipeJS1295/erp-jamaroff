@@ -49,6 +49,8 @@ export interface EboletaInput {
   item: string;
   /** Total con IVA */
   total: number;
+  /** Fecha de emisión de la boleta (AAAA-MM-DD): la fecha de la orden */
+  fecha: string;
 }
 
 /** Datos de la empresa en eBoleta (los mismos que tiene configurados en el portal) */
@@ -177,7 +179,7 @@ export class ApiGatewayClient {
       // El "vendedor" es quien emite en el portal: la persona con que se entra al SII
       vendedor: userRut,
       Encabezado: {
-        IdDoc: { TipoDTE: input.tipo, MedioPago: 1 },
+        IdDoc: { TipoDTE: input.tipo, FchEmis: input.fecha, MedioPago: 1 },
         Emisor: { RUTEmisor: rut, CdgSIISucur: sucursal },
         Receptor: {
           RUTRecep: input.receptorRut,

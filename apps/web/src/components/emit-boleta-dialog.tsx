@@ -85,6 +85,12 @@ export function EmitBoletaDialog({ sale, onClose }: { sale: SaleRow; onClose: ()
 
             <dl className="divide-y divide-slate-100 rounded-md border border-slate-200 text-sm">
               <Row label="Tipo">Boleta electrónica afecta (39)</Row>
+              <Row label="Fecha">
+                {p.issueDate.split('-').reverse().join('/')}
+                <span className="block text-xs text-slate-500">
+                  {p.orderDate && p.orderDate <= p.issueDate ? 'Fecha de la orden' : 'Hoy (la orden no tiene fecha)'}
+                </span>
+              </Row>
               <Row label="Cliente">
                 {p.receptorName}
                 <span className="block font-mono text-xs text-slate-500">
@@ -183,7 +189,7 @@ export function EmitBoletasDialog({ sales, onClose }: { sales: SaleRow[]; onClos
             </span>
           </p>
           <p className="text-sm text-slate-700">
-            Se van a emitir <b>{chosen.length}</b> boletas <b>reales</b> en el SII, una por orden (producto + despacho). Las órdenes que piden
+            Se van a emitir <b>{chosen.length}</b> boletas <b>reales</b> en el SII, una por orden (producto + despacho), cada una con la <b>fecha de su orden</b>. Las órdenes que piden
             factura no se emiten (aparecen con error).
           </p>
           <ul className="max-h-60 divide-y divide-slate-100 overflow-y-auto rounded-md border border-slate-200 text-sm">

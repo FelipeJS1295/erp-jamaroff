@@ -26,6 +26,10 @@ export interface BoletaPreview {
   receptorCommune: string | null;
   genericReceptor: boolean;
   existing: { id: string; number: string; status: string } | null;
+  /** Fecha de la orden (AAAA-MM-DD) */
+  orderDate: string | null;
+  /** Fecha con que se emite la boleta (la de la orden) */
+  issueDate: string;
 }
 
 export interface BoletaEmitida {
@@ -34,6 +38,8 @@ export interface BoletaEmitida {
   folio: number;
   total: number;
   orderNumber: string;
+  /** Fecha de la boleta (AAAA-MM-DD) */
+  issuedAt: string;
 }
 
 export interface BoletasLote {
@@ -105,6 +111,8 @@ export interface SaleRow {
     totalGross: number;
     /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (en el SII desde el sistema) · REVISAR */
     status: ReceiptStatus;
+    /** Fecha de emisión en el SII (AAAA-MM-DD); null si se anotó a mano */
+    issuedAt: string | null;
   } | null;
   /** Neto pagado por el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;

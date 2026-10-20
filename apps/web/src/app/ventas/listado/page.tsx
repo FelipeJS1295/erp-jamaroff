@@ -1,11 +1,12 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Eye, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send } from 'lucide-react';
+import { AlertTriangle, Download, Eye, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send, X } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/components/auth';
 import { CustomerDataDialog } from '@/components/customer-data-dialog';
+import { DownloadBoletasDialog } from '@/components/download-boletas-dialog';
 import { EmitBoletaDialog, EmitBoletasDialog } from '@/components/emit-boleta-dialog';
 import { ReceiptDialog } from '@/components/receipt-dialog';
 import { api, type SaleRow } from '@/lib/api';
@@ -43,6 +44,18 @@ export default function VerVentasPage() {
   // Orden a la que se le está emitiendo la boleta en el SII / emisión de varias
   const [emitFor, setEmitFor] = useState<SaleRow | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // Emitir boletas solo de las órdenes seleccionadas que no tienen
+  const [emitSelectedOpen, setEmitSelectedOpen] = useState(false);
+  // Órdenes seleccionadas (casillas) para descargar sus boletas
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const toggle = (key: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   // Orden a la que se le está agregando/editando la boleta
@@ -64,6 +77,21 @@ export default function VerVentasPage() {
           s.retailer.toLowerCase().includes(q)),
     );
   }, [sales.data, filter, search]);
+
+  // Selección: solo cuentan las órdenes que siguen en la lista (ventas recargadas)
+  const selectedSales = useMemo(() => (sales.data ?? []).filter((s) => selected.has(s.key)), [sales.data, selected]);
+  const selectedWithoutReceipt = useMemo(
+    () => selectedSales.filter((s) => !s.receipt && !s.cancelled && s.orderNumber),
+    [selectedSales],
+  );
+  const allVisibleSelected = rows.length > 0 && rows.every((s) => selected.has(s.key));
+  const toggleAllVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) rows.forEach((s) => next.delete(s.key));
+      else rows.forEach((s) => next.add(s.key));
+      return next;
+    });
 
   // Órdenes del filtro actual a las que les falta boleta (para emitirlas todas juntas)
   const pendingReceipts = useMemo(
@@ -192,6 +220,15 @@ export default function VerVentasPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-500">
+                  <th className="w-8 py-2.5 pl-3">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleAllVisible}
+                      title="Seleccionar todas las órdenes de la lista"
+                      className="accent-brand-600"
+                    />
+                  </th>
                   <th className="px-3 py-2.5 font-medium">Retailer</th>
                   <th className="px-3 py-2.5 font-medium">N° orden</th>
                   <th className="px-3 py-2.5 font-medium">Fecha</th>
@@ -228,6 +265,8 @@ export default function VerVentasPage() {
                     onReceipt={() => setReceiptFor(s)}
                     onCustomer={() => setCustomerFor(s)}
                     onEmit={siiEnabled ? () => setEmitFor(s) : undefined}
+                    selected={selected.has(s.key)}
+                    onToggle={() => toggle(s.key)}
                   />
                 ))}
               </tbody>
@@ -239,6 +278,56 @@ export default function VerVentasPage() {
       {customerFor && <CustomerDataDialog sale={customerFor} onClose={() => setCustomerFor(null)} />}
       {emitFor && <EmitBoletaDialog sale={emitFor} onClose={() => setEmitFor(null)} />}
       {bulkOpen && <EmitBoletasDialog sales={pendingReceipts} onClose={() => setBulkOpen(false)} />}
+      {emitSelectedOpen && (
+        <EmitBoletasDialog
+          sales={selectedWithoutReceipt}
+          onClose={() => {
+            setEmitSelectedOpen(false);
+            setSelected(new Set());
+          }}
+        />
+      )}
+      {downloadOpen && (
+        <DownloadBoletasDialog
+          sales={selectedSales}
+          siiEnabled={siiEnabled}
+          onClose={() => {
+            setDownloadOpen(false);
+            setSelected(new Set());
+          }}
+        />
+      )}
+
+      {/* Barra de acciones de la selección */}
+      {selectedSales.length > 0 && !downloadOpen && !emitSelectedOpen && (
+        <div className="fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
+          <div className="flex items-center gap-3 rounded-full bg-slate-900 py-2 pr-2 pl-5 text-sm text-white shadow-xl">
+            <span>
+              <b>{selectedSales.length}</b> seleccionada(s)
+              <span className="ml-1 text-slate-400">
+                · {selectedSales.filter((s) => s.receipt?.status === 'EMITIDA').length} con boleta
+              </span>
+            </span>
+            {siiEnabled && selectedWithoutReceipt.length > 0 && (
+              <button
+                onClick={() => setEmitSelectedOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-4 py-1.5 font-medium hover:bg-white/20"
+              >
+                <Send className="size-4" /> Emitir {selectedWithoutReceipt.length} boleta(s)
+              </button>
+            )}
+            <button
+              onClick={() => setDownloadOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-brand-500 px-4 py-1.5 font-medium hover:bg-brand-600"
+            >
+              <Download className="size-4" /> Descargar boletas
+            </button>
+            <button onClick={() => setSelected(new Set())} className="rounded-full p-1.5 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Quitar selección">
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {sales.data && sales.data.length >= 500 && (
         <p className="mt-2 text-xs text-slate-400">Se muestran las 500 órdenes más recientes.</p>
@@ -247,12 +336,22 @@ export default function VerVentasPage() {
   );
 }
 
-function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => void; onEmit?: () => void }) {
-  const { s, onReceipt, onCustomer, onEmit } = props;
+function SaleLine(props: {
+  s: SaleRow;
+  onReceipt: () => void;
+  onCustomer: () => void;
+  onEmit?: () => void;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const { s, onReceipt, onCustomer, onEmit, selected, onToggle } = props;
   const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
-    <tr className={cn('align-top hover:bg-slate-50', s.cancelled && 'text-slate-400')}>
+    <tr className={cn('align-top hover:bg-slate-50', s.cancelled && 'text-slate-400', selected && 'bg-brand-50/60')}>
+      <td className="py-2.5 pl-3">
+        <input type="checkbox" checked={selected} onChange={onToggle} className="accent-brand-600" aria-label="Seleccionar orden" />
+      </td>
       <td className="px-3 py-2.5 font-medium whitespace-nowrap">{s.retailer}</td>
       <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{s.orderLabel ?? s.orderNumber ?? '—'}</td>
       <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">
