@@ -6,11 +6,15 @@ import { siiRut } from './rut.js';
  *
  * Variables del .env:
  *   APIGATEWAY_TOKEN   token de la "conexión" creada en API Gateway
- *   SII_EMISOR_RUT     RUT de la empresa que emite (ej: 76123456-7)
- *   SII_EMISOR_CLAVE   clave tributaria del SII de ese RUT
+ *   SII_EMISOR_RUT     RUT de la EMPRESA que emite la boleta (ej: 76123456-7)
+ *   SII_USUARIO_RUT    RUT de la PERSONA que entra al SII (la misma con que haces las boletas a mano)
+ *   SII_USUARIO_CLAVE  clave del SII de esa persona
  *   APIGATEWAY_URL     (opcional) por defecto https://app.apigateway.cl/api/v2
  *
- * Las credenciales del SII van en cada llamada (API Gateway no las guarda).
+ * Igual que en el portal: se entra con el RUT y clave personales y se emite a nombre de la empresa
+ * (la persona debe estar autorizada como usuario de eBoleta de la empresa).
+ * Si la empresa tiene clave propia, SII_USUARIO_RUT puede ser el mismo RUT de la empresa.
+ * Las credenciales van en cada llamada (API Gateway no las guarda).
  */
 
 /** El SII/API Gateway respondió con un error claro: la boleta NO se emitió */
@@ -47,14 +51,17 @@ export class ApiGatewayClient {
   config() {
     const token = process.env.APIGATEWAY_TOKEN?.trim();
     const rut = siiRut(process.env.SII_EMISOR_RUT);
-    const clave = process.env.SII_EMISOR_CLAVE;
+    const userRut = siiRut(process.env.SII_USUARIO_RUT);
+    const clave = process.env.SII_USUARIO_CLAVE;
     return {
-      enabled: Boolean(token && rut && clave),
+      enabled: Boolean(token && rut && userRut && clave),
       rut,
+      userRut,
       missing: [
         !token && 'APIGATEWAY_TOKEN',
         !rut && 'SII_EMISOR_RUT',
-        !clave && 'SII_EMISOR_CLAVE',
+        !userRut && 'SII_USUARIO_RUT',
+        !clave && 'SII_USUARIO_CLAVE',
       ].filter(Boolean) as string[],
     };
   }
@@ -68,8 +75,11 @@ export class ApiGatewayClient {
     }
     return {
       token: process.env.APIGATEWAY_TOKEN!.trim(),
+      /** RUT de la empresa (emisor de la boleta) */
       rut: cfg.rut!,
-      clave: process.env.SII_EMISOR_CLAVE!,
+      /** RUT y clave de la persona que entra al SII */
+      userRut: cfg.userRut!,
+      clave: process.env.SII_USUARIO_CLAVE!,
       url: (process.env.APIGATEWAY_URL ?? 'https://app.apigateway.cl/api/v2').replace(/\/+$/, ''),
     };
   }
@@ -84,7 +94,7 @@ export class ApiGatewayClient {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({ auth: { pass: { rut: c.rut, clave: c.clave } }, ...body }),
+        body: JSON.stringify({ auth: { pass: { rut: c.userRut, clave: c.clave } }, ...body }),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
@@ -113,9 +123,10 @@ export class ApiGatewayClient {
 
   /** Emite una boleta en el portal eBoleta del SII */
   async emitirBoleta(input: EboletaInput): Promise<EboletaResult> {
-    const { rut } = this.credentials();
+    const { rut, userRut } = this.credentials();
     const dte = {
-      vendedor: rut,
+      // El "vendedor" es quien emite en el portal: la persona con que se entra al SII
+      vendedor: userRut,
       Encabezado: {
         IdDoc: { TipoDTE: input.tipo, MedioPago: 1 },
         Emisor: { RUTEmisor: rut, CdgSIISucur: 0 },
