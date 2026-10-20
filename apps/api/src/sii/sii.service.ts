@@ -21,7 +21,10 @@ export interface BoletaPreview {
   productTotal: number;
   shippingTotal: number;
   receptorRut: string;
-  receptorName: string | null;
+  /** Nombre del cliente que va en la boleta (si no viene, "Cliente") */
+  receptorName: string;
+  receptorAddress: string | null;
+  receptorCommune: string | null;
   /** El RUT del cliente no vino o no es válido: se usa el genérico */
   genericReceptor: boolean;
   existing: { id: string; number: string; status: string } | null;
@@ -70,7 +73,9 @@ export class SiiService {
       productTotal: data.productTotal,
       shippingTotal: data.shippingTotal,
       receptorRut: rut ?? RUT_GENERICO,
-      receptorName: data.customer.name,
+      receptorName: (data.customer.name ?? data.shipping.name ?? '').trim() || 'Cliente',
+      receptorAddress: data.shipping.address,
+      receptorCommune: data.shipping.commune,
       genericReceptor: !rut,
       existing: await this.existing(await this.retailerId(retailerCode), orderNumber),
     };
@@ -117,7 +122,15 @@ export class SiiService {
 
     // 2. Emite en el SII
     try {
-      const result = await this.gateway.emitirBoleta({ tipo: 39, receptorRut: p.receptorRut, item: p.item, total: p.total });
+      const result = await this.gateway.emitirBoleta({
+        tipo: 39,
+        receptorRut: p.receptorRut,
+        receptorNombre: p.receptorName,
+        receptorDireccion: p.receptorAddress,
+        receptorComuna: p.receptorCommune,
+        item: p.item,
+        total: p.total,
+      });
       const [saved] = await this.db
         .update(customerReceipts)
         .set({

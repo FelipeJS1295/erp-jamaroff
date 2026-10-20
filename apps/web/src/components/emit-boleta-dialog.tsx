@@ -86,11 +86,17 @@ export function EmitBoletaDialog({ sale, onClose }: { sale: SaleRow; onClose: ()
             <dl className="divide-y divide-slate-100 rounded-md border border-slate-200 text-sm">
               <Row label="Tipo">Boleta electrónica afecta (39)</Row>
               <Row label="Cliente">
-                {p.receptorName ?? '—'}
+                {p.receptorName}
                 <span className="block font-mono text-xs text-slate-500">
                   RUT {p.receptorRut}
                   {p.genericReceptor && ' (genérico: la orden no trae un RUT válido)'}
                 </span>
+                {p.receptorAddress && (
+                  <span className="block text-xs text-slate-500">
+                    {p.receptorAddress}
+                    {p.receptorCommune && `, ${p.receptorCommune}`}
+                  </span>
+                )}
               </Row>
               <Row label="Detalle">{p.item}</Row>
               <Row label="Producto">{clp(p.productTotal)}</Row>

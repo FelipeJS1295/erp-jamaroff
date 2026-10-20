@@ -17,6 +17,9 @@ import { siiRut } from './rut.js';
  * Las credenciales van en cada llamada (API Gateway no las guarda).
  */
 
+/** Recorta un texto al largo máximo que acepta el SII */
+const cut = (text: string, max: number) => text.replace(/\s+/g, ' ').trim().slice(0, max);
+
 /** El SII/API Gateway respondió con un error claro: la boleta NO se emitió */
 export class SiiRejectedError extends Error {}
 
@@ -37,6 +40,11 @@ export interface EboletaInput {
   tipo: 39 | 41;
   /** RUT del cliente (o el genérico 66666666-6) */
   receptorRut: string;
+  /** Nombre del cliente (obligatorio para el SII) */
+  receptorNombre: string;
+  /** Dirección y comuna (opcionales) */
+  receptorDireccion?: string | null;
+  receptorComuna?: string | null;
   /** Nombre del ítem (eBoleta admite un solo ítem por boleta) */
   item: string;
   /** Total con IVA */
@@ -130,7 +138,13 @@ export class ApiGatewayClient {
       Encabezado: {
         IdDoc: { TipoDTE: input.tipo, MedioPago: 1 },
         Emisor: { RUTEmisor: rut, CdgSIISucur: 0 },
-        Receptor: { RUTRecep: input.receptorRut },
+        Receptor: {
+          RUTRecep: input.receptorRut,
+          // Largos máximos del formato DTE del SII
+          RznSocRecep: cut(input.receptorNombre, 100),
+          ...(input.receptorDireccion ? { DirRecep: cut(input.receptorDireccion, 70) } : {}),
+          ...(input.receptorComuna ? { CmnaRecep: cut(input.receptorComuna, 20) } : {}),
+        },
       },
       Detalle: [{ NmbItem: input.item, QtyItem: 1, PrcItem: Math.round(input.total) }],
     };

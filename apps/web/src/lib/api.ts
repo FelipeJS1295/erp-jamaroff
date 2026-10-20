@@ -21,7 +21,9 @@ export interface BoletaPreview {
   productTotal: number;
   shippingTotal: number;
   receptorRut: string;
-  receptorName: string | null;
+  receptorName: string;
+  receptorAddress: string | null;
+  receptorCommune: string | null;
   genericReceptor: boolean;
   existing: { id: string; number: string; status: string } | null;
 }
