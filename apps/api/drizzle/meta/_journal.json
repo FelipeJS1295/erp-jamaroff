@@ -92,6 +92,13 @@
       "when": 1792092573544,
       "tag": "0012_tough_star_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792507876776,
+      "tag": "0013_falabella_rut_cliente",
+      "breakpoints": true
     }
   ]
 }
