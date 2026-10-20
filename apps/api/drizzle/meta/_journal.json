@@ -99,6 +99,13 @@
       "when": 1792507876776,
       "tag": "0013_falabella_rut_cliente",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792508636418,
+      "tag": "0014_boletas_sii",
+      "breakpoints": true
     }
   ]
 }

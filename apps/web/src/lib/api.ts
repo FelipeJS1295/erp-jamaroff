@@ -2,6 +2,44 @@ import { healthResponseSchema, type HealthResponse } from '@erp/shared';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4100/api';
 
+export type ReceiptStatus = 'REGISTRADA' | 'EMITIENDO' | 'EMITIDA' | 'REVISAR';
+
+/** ¿Está configurada la emisión de boletas en el SII (API Gateway)? */
+export interface SiiStatus {
+  enabled: boolean;
+  emisorRut: string | null;
+  missing: string[];
+}
+
+/** Lo que se va a emitir para una orden */
+export interface BoletaPreview {
+  retailerCode: string;
+  orderNumber: string;
+  wantsInvoice: boolean;
+  item: string;
+  total: number;
+  productTotal: number;
+  shippingTotal: number;
+  receptorRut: string;
+  receptorName: string | null;
+  genericReceptor: boolean;
+  existing: { id: string; number: string; status: string } | null;
+}
+
+export interface BoletaEmitida {
+  ok: true;
+  id: string;
+  folio: number;
+  total: number;
+  orderNumber: string;
+}
+
+export interface BoletasLote {
+  emitted: number;
+  failed: number;
+  results: (BoletaEmitida | { ok: false; orderNumber: string; error: string })[];
+}
+
 export interface ImportRetailer {
   code: string;
   name: string;
@@ -59,7 +97,13 @@ export interface SaleRow {
   /** Lo que pagó el cliente por el producto (con IVA) */
   salePrice: number | null;
   /** Boleta al cliente final (producto + envío, con IVA) */
-  receipt: { id: string; number: string; totalGross: number } | null;
+  receipt: {
+    id: string;
+    number: string;
+    totalGross: number;
+    /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (en el SII desde el sistema) · REVISAR */
+    status: ReceiptStatus;
+  } | null;
   /** Neto pagado por el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
   /** Comisión cobrada (negativa, con IVA) */
@@ -465,6 +509,19 @@ export const api = {
   saveReceipt: (data: { retailerCode: string; orderNumber: string; receiptNumber: string; totalGross: string }) =>
     request<{ id: string }>('/sales/receipts', { method: 'POST', body: JSON.stringify(data) }),
   deleteReceipt: (id: string) => request<{ deleted: boolean }>(`/sales/receipts/${id}`, { method: 'DELETE' }),
+
+  /** Boletas en el SII (API Gateway) */
+  siiStatus: () => request<SiiStatus>('/sii/status'),
+  boletaPreview: (retailerCode: string, orderNumber: string) =>
+    request<BoletaPreview>(
+      `/sii/boletas/preview?retailer=${encodeURIComponent(retailerCode)}&order=${encodeURIComponent(orderNumber)}`,
+    ),
+  emitBoleta: (retailerCode: string, orderNumber: string) =>
+    request<BoletaEmitida>('/sii/boletas', { method: 'POST', body: JSON.stringify({ retailerCode, orderNumber }) }),
+  emitBoletas: (orders: { retailerCode: string; orderNumber: string }[]) =>
+    request<BoletasLote>('/sii/boletas/lote', { method: 'POST', body: JSON.stringify({ orders }) }),
+  /** PDF de una boleta emitida (se abre en otra pestaña con la cookie de sesión) */
+  boletaPdfUrl: (receiptId: string) => `${API_URL}/sii/boletas/${receiptId}/pdf`,
 
   /** Retailers cuyos archivos de ventas se pueden cargar */
   importRetailers: () => request<ImportRetailer[]>('/sales/import/retailers'),

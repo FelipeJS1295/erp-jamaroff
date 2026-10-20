@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { PRICING_CHANNELS } from '@erp/shared';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../database/database.module.js';
 import { customerReceipts, retailers } from '../database/schema/index.js';
 import {
@@ -39,7 +39,13 @@ export interface SaleWithMargin {
   /** Lo que pagó el cliente por el producto (con IVA) */
   salePrice: number | null;
   /** Boleta al cliente final (producto + envío, con IVA). null = aún no se ingresa */
-  receipt: { id: string; number: string; totalGross: number } | null;
+  receipt: {
+    id: string;
+    number: string;
+    totalGross: number;
+    /** REGISTRADA (a mano) · EMITIENDO · EMITIDA (desde el sistema, con PDF) · REVISAR */
+    status: string;
+  } | null;
   /** Neto que pagó el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
   /** Comisión cobrada por el retailer (negativa, con IVA) */
@@ -97,6 +103,7 @@ type SaleGroup = {
   receipt_id: string | null;
   receipt_number: string | null;
   receipt_total: number | null;
+  receipt_status: string | null;
 };
 
 interface Money {
@@ -140,7 +147,8 @@ export class SalesService {
             * case when s.amounts_include_tax then 1 else ${sql.raw(String(VAT_RATE))} end))::float8 as sale_price,
           min(cr.id::text) as receipt_id,
           min(cr.receipt_number) as receipt_number,
-          min(cr.total_gross)::float8 as receipt_total
+          min(cr.total_gross)::float8 as receipt_total,
+          min(cr.status) as receipt_status
         from sales_records s
         join retailers r on r.id = s.retailer_id
         left join customer_receipts cr on cr.retailer_id = s.retailer_id and cr.order_number = s.order_number
@@ -191,7 +199,12 @@ export class SalesService {
         salePrice: round(salePrice),
         receipt:
           g.receipt_id && g.receipt_number && g.receipt_total !== null
-            ? { id: g.receipt_id, number: g.receipt_number, totalGross: Math.round(g.receipt_total) }
+            ? {
+                id: g.receipt_id,
+                number: g.receipt_number,
+                totalGross: Math.round(g.receipt_total),
+                status: g.receipt_status ?? 'REGISTRADA',
+              }
             : null,
         settlementNet: round(settlementNet),
         commission: round(commission),
@@ -309,6 +322,15 @@ export class SalesService {
       .where(eq(retailers.code, input.retailerCode.toUpperCase()));
     if (!retailer) throw new BadRequestException(`Retailer "${input.retailerCode}" no existe`);
 
+    // Una boleta emitida desde el sistema no se cambia a mano
+    const [current] = await this.db
+      .select({ status: customerReceipts.status, number: customerReceipts.receiptNumber })
+      .from(customerReceipts)
+      .where(and(eq(customerReceipts.retailerId, retailer.id), eq(customerReceipts.orderNumber, input.orderNumber)));
+    if (current && (current.status === 'EMITIDA' || current.status === 'EMITIENDO')) {
+      throw new BadRequestException(`La boleta N° ${current.number} se emitió en el SII desde el sistema: no se puede editar`);
+    }
+
     const [row] = await this.db
       .insert(customerReceipts)
       .values({
@@ -320,13 +342,23 @@ export class SalesService {
       })
       .onConflictDoUpdate({
         target: [customerReceipts.retailerId, customerReceipts.orderNumber],
-        set: { receiptNumber: input.receiptNumber, totalGross: input.totalGross },
+        // Al anotarla a mano (ej: después de revisar en el portal) queda REGISTRADA
+        set: { receiptNumber: input.receiptNumber, totalGross: input.totalGross, status: 'REGISTRADA', siiResponse: null },
       })
       .returning({ id: customerReceipts.id });
     return row;
   }
 
   async deleteReceipt(id: string) {
+    const [current] = await this.db
+      .select({ status: customerReceipts.status, number: customerReceipts.receiptNumber })
+      .from(customerReceipts)
+      .where(eq(customerReceipts.id, id));
+    if (current?.status === 'EMITIDA' || current?.status === 'EMITIENDO') {
+      throw new BadRequestException(
+        `La boleta N° ${current.number} está emitida en el SII: para dejarla sin efecto hay que anularla con una nota de crédito`,
+      );
+    }
     const [row] = await this.db
       .delete(customerReceipts)
       .where(eq(customerReceipts.id, id))

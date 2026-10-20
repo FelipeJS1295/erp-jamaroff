@@ -24,7 +24,9 @@ const clp = (n: number) => `$${Math.round(n).toLocaleString('es-CL')}`;
  */
 export function ReceiptDialog({ sale, onClose }: { sale: SaleRow; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [number, setNumber] = useState(sale.receipt?.number ?? '');
+  // "Revisar" = el SII no confirmó una emisión: se anota el N° real (si quedó emitida) o se quita
+  const reviewing = sale.receipt?.status === 'REVISAR';
+  const [number, setNumber] = useState(reviewing ? '' : (sale.receipt?.number ?? ''));
   const [total, setTotal] = useState(sale.receipt ? String(sale.receipt.totalGross) : '');
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +65,9 @@ export function ReceiptDialog({ sale, onClose }: { sale: SaleRow; onClose: () =>
       <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
           <div>
-            <h2 className="text-base font-semibold">{sale.receipt ? 'Editar boleta' : 'Agregar boleta'}</h2>
+            <h2 className="text-base font-semibold">
+              {reviewing ? 'Revisar boleta' : sale.receipt ? 'Editar boleta' : 'Agregar boleta'}
+            </h2>
             <p className="text-xs text-slate-500">
               {sale.retailer} · OC {sale.orderLabel ?? sale.orderNumber}
             </p>
@@ -81,6 +85,12 @@ export function ReceiptDialog({ sale, onClose }: { sale: SaleRow; onClose: () =>
           }}
           className="space-y-4 px-5 py-4"
         >
+          {reviewing && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              El SII no confirmó la emisión. Entra al portal eBoleta del SII: si la boleta quedó emitida, anota aquí su N°;
+              si no, usa <b>Quitar boleta</b> y vuelve a emitirla.
+            </p>
+          )}
           <p className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700">
             {sale.productName ?? 'Sin nombre'}
             {sale.salePrice !== null && (
@@ -129,7 +139,8 @@ export function ReceiptDialog({ sale, onClose }: { sale: SaleRow; onClose: () =>
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm(`¿Quitar la boleta N° ${sale.receipt!.number} de esta orden?`)) remove.mutate();
+                  if (confirm(reviewing ? '¿Quitar el intento sin confirmar?' : `¿Quitar la boleta N° ${sale.receipt!.number} de esta orden?`))
+                    remove.mutate();
                 }}
                 disabled={remove.isPending}
                 className="inline-flex items-center gap-1.5 text-sm text-red-600 hover:underline disabled:opacity-50"

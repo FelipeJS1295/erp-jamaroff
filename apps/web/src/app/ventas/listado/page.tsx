@@ -1,11 +1,12 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Eye, Loader2, Pencil, Plus, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Eye, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/components/auth';
 import { CustomerDataDialog } from '@/components/customer-data-dialog';
+import { EmitBoletaDialog, EmitBoletasDialog } from '@/components/emit-boleta-dialog';
 import { ReceiptDialog } from '@/components/receipt-dialog';
 import { api, type SaleRow } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -35,6 +36,13 @@ const FILTERS: { id: Filter; label: string; match: (s: SaleRow) => boolean }[] =
 
 export default function VerVentasPage() {
   const sales = useQuery({ queryKey: ['sales'], queryFn: api.listSales });
+  // ¿Se pueden emitir boletas en el SII desde el sistema? (API Gateway configurado)
+  const sii = useQuery({ queryKey: ['sii-status'], queryFn: api.siiStatus, staleTime: 5 * 60_000 });
+  const { canEdit } = useAuth();
+  const siiEnabled = Boolean(sii.data?.enabled) && canEdit;
+  // Orden a la que se le está emitiendo la boleta en el SII / emisión de varias
+  const [emitFor, setEmitFor] = useState<SaleRow | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
   // Orden a la que se le está agregando/editando la boleta
@@ -56,6 +64,12 @@ export default function VerVentasPage() {
           s.retailer.toLowerCase().includes(q)),
     );
   }, [sales.data, filter, search]);
+
+  // Órdenes del filtro actual a las que les falta boleta (para emitirlas todas juntas)
+  const pendingReceipts = useMemo(
+    () => rows.filter((s) => !s.cancelled && s.orderNumber && !s.receipt),
+    [rows],
+  );
 
   // Totales de las órdenes que ya tienen resultado (liquidación + factura)
   const summary = useMemo(() => {
@@ -142,6 +156,14 @@ export default function VerVentasPage() {
                 className="w-64 rounded-md border border-slate-300 bg-white py-1.5 pr-3 pl-8 text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 focus:outline-none"
               />
             </label>
+            {siiEnabled && filter === 'noReceipt' && pendingReceipts.length > 0 && (
+              <button
+                onClick={() => setBulkOpen(true)}
+                className="ml-auto inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+              >
+                <Send className="size-4" /> Emitir {pendingReceipts.length} boleta(s) en el SII
+              </button>
+            )}
           </div>
         </>
       )}
@@ -205,6 +227,7 @@ export default function VerVentasPage() {
                     s={s}
                     onReceipt={() => setReceiptFor(s)}
                     onCustomer={() => setCustomerFor(s)}
+                    onEmit={siiEnabled ? () => setEmitFor(s) : undefined}
                   />
                 ))}
               </tbody>
@@ -214,6 +237,8 @@ export default function VerVentasPage() {
       </section>
       {receiptFor && <ReceiptDialog sale={receiptFor} onClose={() => setReceiptFor(null)} />}
       {customerFor && <CustomerDataDialog sale={customerFor} onClose={() => setCustomerFor(null)} />}
+      {emitFor && <EmitBoletaDialog sale={emitFor} onClose={() => setEmitFor(null)} />}
+      {bulkOpen && <EmitBoletasDialog sales={pendingReceipts} onClose={() => setBulkOpen(false)} />}
 
       {sales.data && sales.data.length >= 500 && (
         <p className="mt-2 text-xs text-slate-400">Se muestran las 500 órdenes más recientes.</p>
@@ -222,8 +247,8 @@ export default function VerVentasPage() {
   );
 }
 
-function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => void }) {
-  const { s, onReceipt, onCustomer } = props;
+function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => void; onEmit?: () => void }) {
+  const { s, onReceipt, onCustomer, onEmit } = props;
   const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
@@ -258,7 +283,35 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">
         <div className="flex items-start gap-1.5">
-          {s.receipt && (
+          {s.receipt?.status === 'EMITIDA' && (
+            // Emitida en el SII desde el sistema: no se edita, se ve el PDF
+            <a
+              href={api.boletaPdfUrl(s.receipt.id)}
+              target="_blank"
+              rel="noreferrer"
+              title="Emitida en el SII · ver PDF"
+              className="mr-1 text-left"
+            >
+              <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 font-mono text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                N° {s.receipt.number}
+                <FileText className="size-3" />
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(s.receipt.totalGross)} · SII</span>
+            </a>
+          )}
+          {(s.receipt?.status === 'REVISAR' || s.receipt?.status === 'EMITIENDO') && (
+            <button
+              onClick={canEdit && s.receipt.status === 'REVISAR' ? onReceipt : undefined}
+              title="El SII no confirmó la boleta: revisa en el portal eBoleta si quedó emitida y anota su N°, o quita el intento"
+              className="mr-1 text-left"
+            >
+              <span className="inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+                <AlertTriangle className="size-3" />
+                {s.receipt.status === 'REVISAR' ? 'Revisar' : 'Emitiendo…'}
+              </span>
+            </button>
+          )}
+          {s.receipt && s.receipt.status === 'REGISTRADA' && (
             <button
               onClick={canEdit ? onReceipt : undefined}
               disabled={!canEdit}
@@ -277,8 +330,13 @@ function SaleLine(props: { s: SaleRow; onReceipt: () => void; onCustomer: () => 
               <IconButton title="Ver datos del cliente para la boleta o factura" onClick={onCustomer}>
                 <Eye className="size-4" />
               </IconButton>
+              {onEmit && !s.receipt && (
+                <IconButton title="Emitir boleta en el SII" onClick={onEmit}>
+                  <Send className="size-4" />
+                </IconButton>
+              )}
               {canEdit && !s.receipt && (
-                <IconButton title="Agregar boleta" onClick={onReceipt}>
+                <IconButton title="Agregar boleta emitida fuera del sistema (a mano)" onClick={onReceipt}>
                   <Plus className="size-4" />
                 </IconButton>
               )}

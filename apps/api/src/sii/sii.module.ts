@@ -1,0 +1,13 @@
+import { Module } from '@nestjs/common';
+import { SalesModule } from '../sales/sales.module.js';
+import { ApiGatewayClient } from './api-gateway.client.js';
+import { SiiController } from './sii.controller.js';
+import { SiiService } from './sii.service.js';
+
+@Module({
+  // Los datos del cliente y los montos de la orden salen de Ventas
+  imports: [SalesModule],
+  controllers: [SiiController],
+  providers: [SiiService, ApiGatewayClient],
+})
+export class SiiModule {}

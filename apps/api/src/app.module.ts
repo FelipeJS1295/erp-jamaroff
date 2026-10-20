@@ -8,6 +8,7 @@ import { ReportsModule } from './reports/reports.module.js';
 import { SalesIngestionModule } from './sales-ingestion/sales-ingestion.module.js';
 import { SalesModule } from './sales/sales.module.js';
 import { SettlementsModule } from './settlements/settlements.module.js';
+import { SiiModule } from './sii/sii.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { PurchasesModule } from './purchases/purchases.module.js';
 
@@ -28,6 +29,7 @@ import { PurchasesModule } from './purchases/purchases.module.js';
     SalesIngestionModule,
     SalesModule,
     SettlementsModule,
+    SiiModule,
     CatalogModule,
   ],
 })

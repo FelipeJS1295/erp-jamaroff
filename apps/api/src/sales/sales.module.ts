@@ -8,5 +8,7 @@ import { SalesService } from './sales.service.js';
   imports: [SettlementsModule],
   controllers: [SalesController],
   providers: [SalesService],
+  // La usan la emisión de boletas (SII) y la API externa
+  exports: [SalesService],
 })
 export class SalesModule {}

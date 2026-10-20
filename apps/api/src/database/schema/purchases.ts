@@ -1,4 +1,4 @@
-import { date, index, numeric, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
+import { date, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { retailers } from './retailers.js';
 import { users } from './users.js';
@@ -83,6 +83,22 @@ export const customerReceipts = pgTable(
     receiptNumber: varchar('receipt_number', { length: 50 }).notNull(),
     /** Total de la boleta, con IVA */
     totalGross: numeric('total_gross', { precision: 14, scale: 2 }).notNull(),
+    /** Tipo de documento SII: 39 boleta afecta, 41 boleta exenta, 33 factura */
+    documentType: integer('document_type').notNull().default(39),
+    /**
+     * REGISTRADA  se anotó a mano (emitida fuera del sistema)
+     * EMITIENDO   se está emitiendo en el SII (bloquea un segundo intento)
+     * EMITIDA     emitida desde el sistema (API Gateway)
+     * REVISAR     el SII no confirmó: revisar en el portal antes de reintentar
+     */
+    status: varchar('status', { length: 20 }).notNull().default('REGISTRADA'),
+    /** Fecha de emisión en el SII */
+    issuedAt: date('issued_at'),
+    /** PDF de la boleta (base64) y su URL en el SII */
+    pdfData: text('pdf_data'),
+    pdfUrl: text('pdf_url'),
+    /** Respuesta o error del SII (para revisar) */
+    siiResponse: jsonb('sii_response'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true })

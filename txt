@@ -3,3 +3,7 @@ Clave del usuario admin inicial: 82hilw0AMrx6jxyN
 
 actualizar en vps
 erp-jerkhome-deploy
+
+curl -s -o /dev/null -w "SII: %{http_code}\n" -x http://sii:4aff35ee8c0c49dfa6cb346462dffdf2@127.0.0.1:3128 https://www.sii.cl
+
+curl -s -o /dev/null -w "Otra página: %{http_code}\n" -x http://sii:4aff35ee8c0c49dfa6cb346462dffdf2@127.0.0.1:3128 https://www.google.com
