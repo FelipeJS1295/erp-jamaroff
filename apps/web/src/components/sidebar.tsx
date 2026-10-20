@@ -7,6 +7,10 @@ import {
   KeyRound,
   LogOut,
   Users,
+  FileMinus,
+  HandCoins,
+  Percent,
+  Undo2,
   Boxes,
   FileSpreadsheet,
   FileUp,
@@ -42,7 +46,7 @@ const sections: NavSection[] = [
   {
     title: 'Maestras',
     items: [
-      { label: 'Retailers', href: '/maestras/retailers', icon: Store, ready: false },
+      { label: 'Retailers', href: '/maestras/retailers', icon: Store, ready: true },
       { label: 'Productos', href: '/maestras/productos', icon: Boxes, ready: true },
       { label: 'Catálogo retail', href: '/maestras/catalogo', icon: Tags, ready: true },
     ],
@@ -52,6 +56,7 @@ const sections: NavSection[] = [
     items: [
       { label: 'Ver ventas', href: '/ventas/listado', icon: List, ready: true },
       { label: 'Cargar archivos', href: '/ventas/cargas', icon: FileSpreadsheet, ready: true, edit: true },
+      { label: 'Devoluciones', href: '/ventas/devoluciones', icon: Undo2, ready: true },
     ],
   },
   {
@@ -63,6 +68,9 @@ const sections: NavSection[] = [
     items: [
       { label: 'Conciliación', href: '/conciliacion', icon: Scale, ready: true },
       { label: 'Cargar liquidaciones', href: '/conciliacion/cargas', icon: FileUp, ready: true, edit: true },
+      { label: 'Notas de crédito', href: '/finanzas/notas-credito', icon: FileMinus, ready: true },
+      { label: 'Cuentas por cobrar', href: '/finanzas/cuentas-por-cobrar', icon: HandCoins, ready: true },
+      { label: 'Resumen de IVA', href: '/finanzas/iva', icon: Percent, ready: true },
       { label: 'Reportes', href: '/reportes', icon: BarChart3, ready: true },
     ],
   },

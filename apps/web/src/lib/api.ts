@@ -113,6 +113,10 @@ export interface SaleRow {
     status: ReceiptStatus;
     /** Fecha de emisión en el SII (AAAA-MM-DD); null si se anotó a mano */
     issuedAt: string | null;
+    /** Total de notas de crédito emitidas/anotadas (con IVA) */
+    creditNotes: number;
+    /** Notas en borrador (falta firmarlas en MIPYME) */
+    draftCreditNotes: number;
   } | null;
   /** Neto pagado por el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
@@ -206,6 +210,8 @@ export interface PurchaseInvoice {
   clients: string[];
   /** Fecha en que se ingresó (AAAA-MM-DD) */
   createdAt: string;
+  /** Fecha de la factura (AAAA-MM-DD): mes de su IVA crédito */
+  issueDate: string;
   orders: number;
   net: number;
   vat: number;
@@ -237,6 +243,8 @@ export interface Supplier {
 export interface NewPurchaseDocument {
   supplier: string;
   documentNumber: string;
+  /** Fecha de la factura (AAAA-MM-DD) */
+  issueDate?: string | null;
   /** Opción de conciliación elegida (ej: CENCOSUD, CENCOSUD_FULFILLMENT) */
   retailerCode: string;
   lines: { itemKey: string; orderNumber: string | null; productName: string | null; amountNet: string }[];
@@ -455,6 +463,211 @@ export interface AppUser extends SessionUser {
   createdAt: string;
 }
 
+
+// ===================== Maestra de retailers =====================
+
+export type PaymentBase = 'ORDEN' | 'DESPACHO';
+export type ChannelType = 'department_store' | 'supermarket' | 'marketplace' | 'ecommerce' | 'other';
+
+export interface RetailerMaster {
+  id: string;
+  code: string;
+  name: string;
+  legalName: string | null;
+  taxId: string | null;
+  channelType: ChannelType;
+  commissionPct: number;
+  paymentDays: number;
+  paymentBase: PaymentBase;
+  contact: string | null;
+  commercialTerms: string | null;
+  isActive: boolean;
+  orders: number;
+  lastOrderDate: string | null;
+}
+
+// ===================== Notas de crédito =====================
+
+export type CreditNoteStatus = 'BORRADOR' | 'EMITIDA' | 'REGISTRADA' | 'ERROR';
+
+export interface CreditNote {
+  id: string;
+  retailerCode: string;
+  retailer: string;
+  orderNumber: string;
+  receiptNumber: string;
+  receiptDate: string | null;
+  refCode: 1 | 3;
+  reason: string;
+  amountGross: number;
+  status: CreditNoteStatus;
+  draftCode: string | null;
+  folio: string | null;
+  issuedAt: string | null;
+  error: string | null;
+  notes: string | null;
+  createdAt: string;
+  returnId: string | null;
+}
+
+/** Orden cancelada con boleta a la que le falta nota de crédito */
+export interface CreditNotePending {
+  retailerCode: string;
+  retailer: string;
+  orderNumber: string;
+  orderId: string | null;
+  orderDate: string | null;
+  productName: string | null;
+  status: string | null;
+  receiptNumber: string;
+  receiptTotal: number;
+  receiptDate: string | null;
+  credited: number;
+  missing: number;
+}
+
+export interface CreditNotePreview {
+  retailerCode: string;
+  orderNumber: string;
+  receiptNumber: string;
+  receiptType: number;
+  receiptDate: string | null;
+  receiptTotal: number;
+  credited: number;
+  available: number;
+  customerName: string;
+  customerRut: string;
+  address: string | null;
+  commune: string | null;
+  item: string;
+}
+
+export interface CreditNoteInput {
+  retailerCode: string;
+  orderNumber: string;
+  amountGross: number | string;
+  refCode: 1 | 3;
+  reason: string;
+  returnId?: string | null;
+}
+
+// ===================== Devoluciones =====================
+
+export type ReturnStatus = 'SOLICITADA' | 'EN_TRANSITO' | 'RECIBIDA' | 'CERRADA' | 'RECHAZADA';
+export type SupplierAction = 'NINGUNA' | 'DEVUELTO' | 'NC_PROVEEDOR';
+
+export interface ProductReturn {
+  id: string;
+  retailerCode: string;
+  retailer: string;
+  orderNumber: string;
+  orderId: string | null;
+  orderDate: string | null;
+  productName: string | null;
+  salePrice: number | null;
+  requestedAt: string;
+  scope: 'TOTAL' | 'PARCIAL';
+  reason: string;
+  status: ReturnStatus;
+  receivedAt: string | null;
+  productCondition: 'BUENO' | 'DANADO' | null;
+  refundGross: number | null;
+  reverseLogisticsCost: number | null;
+  supplierAction: SupplierAction;
+  supplierCreditGross: number | null;
+  trackingCode: string | null;
+  notes: string | null;
+  receipt: { number: string; totalGross: number } | null;
+  creditNote: { id: string; status: CreditNoteStatus; folio: string | null; amountGross: number } | null;
+  /** Cargos de logística que trae la liquidación de esa orden */
+  settlementLogistics: number | null;
+  /** Lo que le cuesta la devolución a la empresa */
+  netCost: number;
+}
+
+export interface ReturnInput {
+  retailerCode: string;
+  orderNumber: string;
+  requestedAt: string;
+  scope: 'TOTAL' | 'PARCIAL';
+  reason: string;
+  status: ReturnStatus;
+  receivedAt: string | null;
+  productCondition: 'BUENO' | 'DANADO' | null;
+  refundGross: string | null;
+  reverseLogisticsCost: string | null;
+  supplierAction: SupplierAction;
+  supplierCreditGross: string | null;
+  trackingCode: string | null;
+  notes: string | null;
+}
+
+// ===================== Cuentas por cobrar =====================
+
+export type AgingBucket = 'POR_VENCER' | 'D1_30' | 'D31_60' | 'D61_90' | 'D90';
+
+export interface Receivables {
+  today: string;
+  buckets: { key: AgingBucket; label: string }[];
+  totals: { orders: number; expected: number; overdue: number; buckets: Record<AgingBucket, number> };
+  retailers: {
+    code: string;
+    name: string;
+    orders: number;
+    expected: number;
+    overdue: number;
+    buckets: Record<AgingBucket, number>;
+    paymentDays: number;
+    paymentBase: PaymentBase;
+    commissionPct: number;
+  }[];
+  items: {
+    retailerCode: string;
+    retailer: string;
+    orderNumber: string;
+    orderLabel: string | null;
+    orderDate: string | null;
+    productName: string | null;
+    status: string | null;
+    salePrice: number;
+    commissionPct: number;
+    expected: number;
+    baseDate: string | null;
+    dueDate: string | null;
+    daysOverdue: number;
+    daysToDue: number;
+    bucket: AgingBucket;
+  }[];
+  missingCommission: string[];
+}
+
+// ===================== IVA =====================
+
+export interface VatMonth {
+  month: string;
+  debitReceipts: number;
+  debitCreditNotes: number;
+  debit: number;
+  creditPurchases: number;
+  creditCommissions: number;
+  creditLogistics: number;
+  credit: number;
+  balance: number;
+  salesWithoutReceipt: number;
+  salesWithoutReceiptVat: number;
+  draftCreditNotes: number;
+}
+
+export interface VatDocument {
+  date: string | null;
+  kind: 'BOLETA' | 'NOTA_CREDITO' | 'COMPRA' | 'COMISION' | 'LOGISTICA';
+  retailer: string | null;
+  reference: string;
+  description: string | null;
+  gross: number;
+  vat: number;
+}
+
 /** Lanza un Error con el mensaje que devuelve la API (ej: "Faltan las columnas: ...") */
 async function handle<T>(res: Response): Promise<T> {
     // Sesión vencida o sin iniciar: se manda al login (salvo que ya estemos ahí)
@@ -519,6 +732,41 @@ export const api = {
   saveReceipt: (data: { retailerCode: string; orderNumber: string; receiptNumber: string; totalGross: string }) =>
     request<{ id: string }>('/sales/receipts', { method: 'POST', body: JSON.stringify(data) }),
   deleteReceipt: (id: string) => request<{ deleted: boolean }>(`/sales/receipts/${id}`, { method: 'DELETE' }),
+
+  /** Maestra de retailers */
+  listRetailers: () => request<RetailerMaster[]>('/retailers'),
+  updateRetailer: (id: string, data: Partial<Omit<RetailerMaster, 'id' | 'code' | 'orders' | 'lastOrderDate' | 'commissionPct'>> & { commissionPct?: string | number }) =>
+    request<{ ok: boolean }>(`/retailers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  /** Notas de crédito */
+  listCreditNotes: () => request<CreditNote[]>('/credit-notes'),
+  pendingCreditNotes: () => request<CreditNotePending[]>('/credit-notes/pending'),
+  creditNotePreview: (retailerCode: string, orderNumber: string) =>
+    request<CreditNotePreview>(
+      `/credit-notes/preview?retailer=${encodeURIComponent(retailerCode)}&order=${encodeURIComponent(orderNumber)}`,
+    ),
+  draftCreditNote: (data: CreditNoteInput) =>
+    request<{ id: string; draftCode: string }>('/credit-notes/draft', { method: 'POST', body: JSON.stringify(data) }),
+  registerCreditNote: (data: CreditNoteInput & { folio: string; issuedAt: string }) =>
+    request<{ id: string }>('/credit-notes/register', { method: 'POST', body: JSON.stringify(data) }),
+  confirmCreditNote: (id: string, data: { folio: string; issuedAt: string }) =>
+    request<{ ok: boolean }>(`/credit-notes/${id}/confirm`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteCreditNote: (id: string) => request<{ deleted: boolean }>(`/credit-notes/${id}`, { method: 'DELETE' }),
+
+  /** Devoluciones */
+  listReturns: () => request<ProductReturn[]>('/returns'),
+  createReturn: (data: ReturnInput) => request<{ id: string }>('/returns', { method: 'POST', body: JSON.stringify(data) }),
+  updateReturn: (id: string, data: Partial<ReturnInput>) =>
+    request<{ id: string }>(`/returns/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteReturn: (id: string) => request<{ deleted: boolean }>(`/returns/${id}`, { method: 'DELETE' }),
+
+  /** Cuentas por cobrar */
+  receivables: () => request<Receivables>('/receivables'),
+
+  /** Resumen de IVA */
+  vatMonths: (months = 12) => request<VatMonth[]>(`/vat?months=${months}`),
+  vatDetail: (month: string) => request<VatDocument[]>(`/vat/${month}`),
+  vatCsvUrl: (month: string) => `${API_URL}/vat/${month}/csv`,
 
   /** Boletas en el SII (API Gateway) */
   siiStatus: () => request<SiiStatus>('/sii/status'),
@@ -639,6 +887,8 @@ export const api = {
     /** Facturas de proveedores y sus pagos */
   listInvoices: () => request<PurchaseInvoice[]>('/purchases/invoices'),
   getInvoice: (id: string) => request<PurchaseInvoiceDetail>(`/purchases/invoices/${id}`),
+  setInvoiceDate: (id: string, issueDate: string) =>
+    request<{ ok: boolean }>(`/purchases/invoices/${id}`, { method: 'PATCH', body: JSON.stringify({ issueDate }) }),
   addInvoicePayment: (id: string, data: { amount: string; paidAt: string; method: string | null; note: string | null }) =>
     request<{ id: string }>(`/purchases/invoices/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteInvoicePayment: (paymentId: string) =>

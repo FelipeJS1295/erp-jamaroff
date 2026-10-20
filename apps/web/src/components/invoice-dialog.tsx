@@ -34,6 +34,13 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
   const { canEdit } = useAuth();
   const invoice = useQuery({ queryKey: ['invoice', invoiceId], queryFn: () => api.getInvoice(invoiceId) });
   const d = invoice.data;
+  const setDate = useMutation({
+    mutationFn: (issueDate: string) => api.setInvoiceDate(invoiceId, issueDate),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['invoice', invoiceId] });
+      queryClient.invalidateQueries({ queryKey: ['invoices'] });
+    },
+  });
 
   const [amount, setAmount] = useState<string | null>(null); // null = usar el saldo
   const [paidAt, setPaidAt] = useState(today());
@@ -96,6 +103,21 @@ export function InvoiceDialog({ invoiceId, onClose }: { invoiceId: string; onClo
                 ? `${d.supplier} · cliente ${d.clients.join(', ') || '—'} · ingresada el ${dmy(d.createdAt)}`
                 : 'Cargando…'}
             </p>
+            {d && (
+              <label className="mt-1 flex items-center gap-2 text-xs text-slate-600">
+                Fecha de la factura:
+                <input
+                  type="date"
+                  defaultValue={d.issueDate}
+                  disabled={!canEdit || setDate.isPending}
+                  onBlur={(e) => e.target.value && e.target.value !== d.issueDate && setDate.mutate(e.target.value)}
+                  className="rounded border border-slate-300 px-1.5 py-0.5 text-xs disabled:bg-slate-50"
+                  title="Define en qué mes entra el IVA crédito de esta factura"
+                />
+                {setDate.isPending && <Loader2 className="size-3 animate-spin" />}
+                {setDate.isError && <span className="text-red-600">{setDate.error.message}</span>}
+              </label>
+            )}
           </div>
           <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="Cerrar">
             <X className="size-4" />

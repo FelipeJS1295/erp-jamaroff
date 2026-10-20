@@ -47,6 +47,10 @@ export interface SaleWithMargin {
     status: string;
     /** Fecha de emisión en el SII (AAAA-MM-DD); null si se anotó a mano */
     issuedAt: string | null;
+    /** Total de notas de crédito emitidas/anotadas sobre la boleta (con IVA) */
+    creditNotes: number;
+    /** Notas en borrador (falta firmarlas en el Portal MIPYME) */
+    draftCreditNotes: number;
   } | null;
   /** Neto que pagó el retailer en la liquidación. null = aún no paga */
   settlementNet: number | null;
@@ -107,6 +111,8 @@ type SaleGroup = {
   receipt_total: number | null;
   receipt_status: string | null;
   receipt_issued_at: string | null;
+  nc_valid: number;
+  nc_draft: number;
 };
 
 interface Money {
@@ -132,7 +138,7 @@ export class SalesService {
   ) {}
 
   /** Ventas agrupadas por orden, con lo liquidado, lo pagado al proveedor, el IVA y el total */
-  async listWithMargin(): Promise<SaleWithMargin[]> {
+  async listWithMargin(limit = LIMIT): Promise<SaleWithMargin[]> {
     const [{ rows: groups }, money] = await Promise.all([
       this.db.execute<SaleGroup>(sql`
         select
@@ -152,13 +158,20 @@ export class SalesService {
           min(cr.receipt_number) as receipt_number,
           min(cr.total_gross)::float8 as receipt_total,
           min(cr.status) as receipt_status,
-          min(cr.issued_at)::text as receipt_issued_at
+          min(cr.issued_at)::text as receipt_issued_at,
+          -- Notas de crédito: emitidas/anotadas (rebajan la boleta) y borradores sin firmar
+          max((select coalesce(sum(n.amount_gross), 0) from credit_notes n
+            where n.retailer_id = s.retailer_id and n.order_number = s.order_number
+              and n.status in ('EMITIDA', 'REGISTRADA')))::float8 as nc_valid,
+          max((select count(*) from credit_notes n
+            where n.retailer_id = s.retailer_id and n.order_number = s.order_number
+              and n.status = 'BORRADOR'))::int as nc_draft
         from sales_records s
         join retailers r on r.id = s.retailer_id
         left join customer_receipts cr on cr.retailer_id = s.retailer_id and cr.order_number = s.order_number
         group by 1, 2, 3, 4
         order by min(s.order_date) desc nulls last, s.order_number desc
-        limit ${LIMIT}
+        limit ${limit}
       `),
       this.moneyByOrder(),
     ]);
@@ -175,7 +188,8 @@ export class SalesService {
 
       // IVA débito: el de la boleta (producto + envío); sin boleta, el del precio de venta.
       // Orden cancelada: no hay venta ni IVA
-      const vatBase = g.receipt_total ?? salePrice;
+      // Las notas de crédito rebajan la boleta (y su IVA)
+      const vatBase = g.receipt_total !== null ? g.receipt_total - (g.nc_valid ?? 0) : salePrice;
       const vatSale = vatBase !== null && !g.cancelled ? vatOf(vatBase) : null;
       const vatPurchase = supplierGross !== null && supplierNet !== null ? supplierGross - supplierNet : 0;
       // La comisión viene negativa (es un cobro): su IVA es crédito a favor
@@ -209,6 +223,8 @@ export class SalesService {
                 totalGross: Math.round(g.receipt_total),
                 status: g.receipt_status ?? 'REGISTRADA',
                 issuedAt: g.receipt_issued_at,
+                creditNotes: Math.round(g.nc_valid ?? 0),
+                draftCreditNotes: g.nc_draft ?? 0,
               }
             : null,
         settlementNet: round(settlementNet),
@@ -231,7 +247,7 @@ export class SalesService {
    * Datos del cliente de una orden, para emitir la boleta o factura en el SII.
    * Montos con IVA (Walmart informa netos: se les suma el IVA).
    */
-  async customerData(retailerCode: string, orderNumber: string): Promise<CustomerData> {
+  async customerData(retailerCode: string, orderNumber: string, includeCancelled = false): Promise<CustomerData> {
     const { rows } = await this.db.execute<{
       product_name: string | null;
       quantity: number;
@@ -263,7 +279,7 @@ export class SalesService {
       from sales_records s
       join retailers r on r.id = s.retailer_id
       where r.code = ${retailerCode.toUpperCase()} and s.order_number = ${orderNumber}
-        and coalesce(s.status, '') !~* 'cancel|anulad'
+        and (${includeCancelled} or coalesce(s.status, '') !~* 'cancel|anulad')
       order by s.external_item_id
     `);
     if (rows.length === 0) throw new NotFoundException('No se encontró la orden');

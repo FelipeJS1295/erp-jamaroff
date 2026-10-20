@@ -16,6 +16,8 @@ export const VAT_RATE = 1.19;
 export interface NewDocumentInput {
   supplier: string;
   documentNumber: string;
+  /** Fecha de la factura (AAAA-MM-DD). Si no viene, hoy */
+  issueDate?: string | null;
   /** Opción de conciliación (ej: CENCOSUD, CENCOSUD_FULFILLMENT, FALABELLA) */
   retailerCode: string;
   lines: { itemKey: string; orderNumber: string | null; productName: string | null; amountNet: string }[];
@@ -41,6 +43,8 @@ export interface PurchaseInvoice {
   clients: string[];
   /** Fecha en que se ingresó (AAAA-MM-DD) */
   createdAt: string;
+  /** Fecha de emisión de la factura (AAAA-MM-DD): mes del IVA crédito */
+  issueDate: string;
   orders: number;
   net: number;
   vat: number;
@@ -118,7 +122,12 @@ export class PurchasesService {
       // Documento (lo reutiliza si ya existe para ese proveedor)
       await tx
         .insert(purchaseDocuments)
-        .values({ supplierId: supplier.id, documentNumber: input.documentNumber, createdBy: userId })
+        .values({
+          supplierId: supplier.id,
+          documentNumber: input.documentNumber,
+          issueDate: input.issueDate ?? sql`(now() at time zone 'America/Santiago')::date`,
+          createdBy: userId,
+        })
         .onConflictDoNothing();
       const [document] = await tx
         .select()
@@ -197,6 +206,7 @@ export class PurchasesService {
       client_codes: string[] | null;
       client_names: string[] | null;
       created_at: string;
+      issue_date: string;
       orders: number;
       net: number;
       total: number;
@@ -206,6 +216,7 @@ export class PurchasesService {
       select
         d.id, d.supplier_id, s.name as supplier, d.document_number,
         (d.created_at at time zone 'America/Santiago')::date::text as created_at,
+        coalesce(d.issue_date, (d.created_at at time zone 'America/Santiago')::date)::text as issue_date,
         l.client_codes, l.client_names,
         coalesce(l.orders, 0)::int as orders,
         coalesce(l.net, 0)::float8 as net,
@@ -243,6 +254,7 @@ export class PurchasesService {
         documentNumber: r.document_number,
         clients: (r.client_codes ?? []).map((code, i) => RETAILER_LABELS[code] ?? r.client_names?.[i] ?? code),
         createdAt: r.created_at,
+        issueDate: r.issue_date,
         orders: r.orders,
         net,
         vat: total - net,
@@ -253,6 +265,17 @@ export class PurchasesService {
         lastPaymentAt: r.last_payment_at,
       };
     });
+  }
+
+  /** Cambia la fecha de emisión de una factura (define su mes en el resumen de IVA) */
+  async setIssueDate(id: string, issueDate: string) {
+    const [row] = await this.db
+      .update(purchaseDocuments)
+      .set({ issueDate })
+      .where(eq(purchaseDocuments.id, id))
+      .returning({ id: purchaseDocuments.id });
+    if (!row) throw new NotFoundException('La factura no existe');
+    return { ok: true };
   }
 
   /** Una factura con sus órdenes y sus pagos */

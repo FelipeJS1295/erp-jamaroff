@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { z } from 'zod';
 import { CurrentUser, type SessionUser } from '../auth/decorators.js';
 import { validate } from '../products/catalog.validation.js';
@@ -30,6 +30,8 @@ const paymentSchema = z.object({
   note: z.string().trim().max(500).nullish().transform((v) => v || null),
 });
 
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha debe tener formato AAAA-MM-DD');
+
 const documentSchema = z.object({
   supplier: z
     .string({ error: 'Falta el proveedor' })
@@ -42,6 +44,8 @@ const documentSchema = z.object({
     .min(1, 'Falta el N° de documento')
     .max(50, 'El N° de documento puede tener máximo 50 caracteres'),
   retailerCode: z.string({ error: 'Falta el retailer' }).min(1),
+  /** Fecha de la factura (AAAA-MM-DD) */
+  issueDate: dateSchema.nullish(),
   lines: z
     .array(
       z.object({
@@ -63,6 +67,7 @@ const documentSchema = z.object({
  *   DELETE /api/purchases/lines/:id     quita una orden del documento
  *   GET    /api/purchases/invoices                facturas con total, pagado y saldo
  *   GET    /api/purchases/invoices/:id            factura con sus órdenes y pagos
+ *   PATCH  /api/purchases/invoices/:id            { issueDate }  fecha de la factura
  *   POST   /api/purchases/invoices/:id/payments   { amount, paidAt, method?, note? }
  *   DELETE /api/purchases/payments/:id
  * Las rutas que modifican quedan para ADMIN y OPERADOR (regla general del AuthGuard).
@@ -94,6 +99,12 @@ export class PurchasesController {
   @Get('invoices/:id')
   invoice(@Param('id', ParseUUIDPipe) id: string) {
     return this.purchases.getInvoice(id);
+  }
+
+  @Patch('invoices/:id')
+  setIssueDate(@Param('id', ParseUUIDPipe) id: string, @Body() body: unknown) {
+    const { issueDate } = validate(z.object({ issueDate: dateSchema }), body);
+    return this.purchases.setIssueDate(id, issueDate);
   }
 
   @Post('invoices/:id/payments')

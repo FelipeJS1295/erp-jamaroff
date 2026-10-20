@@ -34,6 +34,8 @@ export function PurchaseDocumentDialog(props: {
 
   const [supplier, setSupplier] = useState('');
   const [documentNumber, setDocumentNumber] = useState('');
+  // Fecha de la factura: define en qué mes entra su IVA crédito
+  const [issueDate, setIssueDate] = useState(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date()));
   const [amounts, setAmounts] = useState<string[]>(() => rows.map(() => ''));
   const [error, setError] = useState<string | null>(null);
 
@@ -51,6 +53,7 @@ export function PurchaseDocumentDialog(props: {
       return api.createPurchaseDocument({
         supplier: supplier.trim(),
         documentNumber: documentNumber.trim(),
+        issueDate: issueDate || null,
         retailerCode,
         lines: rows.map((r, i) => ({
           itemKey: r.itemId!,
@@ -94,7 +97,7 @@ export function PurchaseDocumentDialog(props: {
           }}
           className="space-y-4 px-5 py-4"
         >
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <label className="block">
               <span className="mb-1 block text-sm font-medium text-slate-700">Proveedor</span>
               <input
@@ -119,6 +122,10 @@ export function PurchaseDocumentDialog(props: {
                 placeholder="Ej: 12345"
                 className={input}
               />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">Fecha de la factura</span>
+              <input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} className={input} />
             </label>
           </div>
 

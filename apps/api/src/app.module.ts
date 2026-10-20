@@ -9,6 +9,9 @@ import { SalesIngestionModule } from './sales-ingestion/sales-ingestion.module.j
 import { SalesModule } from './sales/sales.module.js';
 import { SettlementsModule } from './settlements/settlements.module.js';
 import { SiiModule } from './sii/sii.module.js';
+import { AccountingModule } from './accounting/accounting.module.js';
+import { RetailersModule } from './retailers/retailers.module.js';
+import { ReturnsModule } from './returns/returns.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { PurchasesModule } from './purchases/purchases.module.js';
 
@@ -30,6 +33,9 @@ import { PurchasesModule } from './purchases/purchases.module.js';
     SalesModule,
     SettlementsModule,
     SiiModule,
+    AccountingModule,
+    RetailersModule,
+    ReturnsModule,
     CatalogModule,
   ],
 })

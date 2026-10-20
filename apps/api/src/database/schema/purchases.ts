@@ -31,6 +31,8 @@ export const purchaseDocuments = pgTable(
       .references(() => suppliers.id),
     /** N° del documento (factura) del proveedor */
     documentNumber: varchar('document_number', { length: 50 }).notNull(),
+    /** Fecha de emisión de la factura (define el mes del IVA crédito) */
+    issueDate: date('issue_date'),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

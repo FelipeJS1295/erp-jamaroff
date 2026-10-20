@@ -1,14 +1,16 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, Eye, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send, X } from 'lucide-react';
+import { AlertTriangle, Download, Eye, FileMinus, FileText, Loader2, Pencil, Plus, RefreshCw, Search, Send, Undo2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useAuth } from '@/components/auth';
+import { CreditNoteDialog } from '@/components/credit-note-dialog';
 import { CustomerDataDialog } from '@/components/customer-data-dialog';
 import { DownloadBoletasDialog } from '@/components/download-boletas-dialog';
 import { EmitBoletaDialog, EmitBoletasDialog } from '@/components/emit-boleta-dialog';
 import { ReceiptDialog } from '@/components/receipt-dialog';
+import { ReturnDialog } from '@/components/return-dialog';
 import { api, type SaleRow } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
@@ -25,7 +27,11 @@ function clp(n: number | null) {
   return n < 0 ? `-${abs}` : abs;
 }
 
-type Filter = 'all' | 'done' | 'noSettlement' | 'noInvoice' | 'noReceipt';
+type Filter = 'all' | 'done' | 'noSettlement' | 'noInvoice' | 'noReceipt' | 'needsCreditNote';
+
+/** Boleta válida a la que todavía le queda monto por rebajar con nota de crédito */
+const creditable = (s: SaleRow) =>
+  Boolean(s.receipt && (s.receipt.status === 'EMITIDA' || s.receipt.status === 'REGISTRADA') && (s.receipt.creditNotes ?? 0) < (s.receipt.totalGross ?? 0));
 
 const FILTERS: { id: Filter; label: string; match: (s: SaleRow) => boolean }[] = [
   { id: 'all', label: 'Todas', match: () => true },
@@ -33,6 +39,7 @@ const FILTERS: { id: Filter; label: string; match: (s: SaleRow) => boolean }[] =
   { id: 'noSettlement', label: 'Falta liquidación', match: (s) => !s.cancelled && s.settlementNet === null },
   { id: 'noInvoice', label: 'Falta factura', match: (s) => !s.cancelled && s.supplierGross === null },
   { id: 'noReceipt', label: 'Falta boleta', match: (s) => !s.cancelled && s.receipt === null },
+  { id: 'needsCreditNote', label: 'Cancelada con boleta', match: (s) => s.cancelled && creditable(s) },
 ];
 
 export default function VerVentasPage() {
@@ -63,6 +70,9 @@ export default function VerVentasPage() {
 
     // Orden de la que se están viendo los datos del cliente
   const [customerFor, setCustomerFor] = useState<SaleRow | null>(null);
+  // Nota de crédito / devolución de una orden
+  const [ncFor, setNcFor] = useState<SaleRow | null>(null);
+  const [returnFor, setReturnFor] = useState<SaleRow | null>(null);
 
   const rows = useMemo(() => {
     const f = FILTERS.find((x) => x.id === filter)!;
@@ -264,6 +274,8 @@ export default function VerVentasPage() {
                     s={s}
                     onReceipt={() => setReceiptFor(s)}
                     onCustomer={() => setCustomerFor(s)}
+                    onCreditNote={() => setNcFor(s)}
+                    onReturn={() => setReturnFor(s)}
                     onEmit={siiEnabled ? () => setEmitFor(s) : undefined}
                     selected={selected.has(s.key)}
                     onToggle={() => toggle(s.key)}
@@ -277,6 +289,21 @@ export default function VerVentasPage() {
       {receiptFor && <ReceiptDialog sale={receiptFor} onClose={() => setReceiptFor(null)} />}
       {customerFor && <CustomerDataDialog sale={customerFor} onClose={() => setCustomerFor(null)} />}
       {emitFor && <EmitBoletaDialog sale={emitFor} onClose={() => setEmitFor(null)} />}
+      {ncFor && ncFor.orderNumber && (
+        <CreditNoteDialog
+          retailerCode={ncFor.retailerCode}
+          orderNumber={ncFor.orderNumber}
+          orderLabel={ncFor.orderLabel}
+          defaults={{ refCode: 1, reason: ncFor.cancelled ? 'Orden cancelada' : 'Devolución del cliente' }}
+          onClose={() => setNcFor(null)}
+        />
+      )}
+      {returnFor && returnFor.orderNumber && (
+        <ReturnDialog
+          order={{ retailerCode: returnFor.retailerCode, orderNumber: returnFor.orderNumber, label: returnFor.orderLabel, salePrice: returnFor.salePrice }}
+          onClose={() => setReturnFor(null)}
+        />
+      )}
       {bulkOpen && <EmitBoletasDialog sales={pendingReceipts} onClose={() => setBulkOpen(false)} />}
       {emitSelectedOpen && (
         <EmitBoletasDialog
@@ -340,11 +367,13 @@ function SaleLine(props: {
   s: SaleRow;
   onReceipt: () => void;
   onCustomer: () => void;
+  onCreditNote: () => void;
+  onReturn: () => void;
   onEmit?: () => void;
   selected: boolean;
   onToggle: () => void;
 }) {
-  const { s, onReceipt, onCustomer, onEmit, selected, onToggle } = props;
+  const { s, onReceipt, onCustomer, onCreditNote, onReturn, onEmit, selected, onToggle } = props;
   const { canEdit } = useAuth();
   const muted = <span className="text-slate-300">—</span>;
   return (
@@ -441,8 +470,24 @@ function SaleLine(props: {
               )}
             </>
           )}
+          {canEdit && s.cancelled && s.orderNumber && creditable(s) && !s.receipt?.draftCreditNotes && (
+            <IconButton title="Orden cancelada: hacer nota de crédito" onClick={onCreditNote}>
+              <FileMinus className="size-4 text-red-500" />
+            </IconButton>
+          )}
+          {canEdit && !s.cancelled && s.orderNumber && (
+            <IconButton title="Registrar devolución" onClick={onReturn}>
+              <Undo2 className="size-4" />
+            </IconButton>
+          )}
           {(s.cancelled || !s.orderNumber) && !s.receipt && muted}
         </div>
+        {s.receipt && (s.receipt.creditNotes > 0 || s.receipt.draftCreditNotes > 0) && (
+          <span className="mt-0.5 block text-xs text-red-600 tabular-nums">
+            {s.receipt.creditNotes > 0 && `NC −${clp(s.receipt.creditNotes)}`}
+            {s.receipt.draftCreditNotes > 0 && <span className="text-amber-600"> · NC borrador {clp(s.receipt.draftCreditNotes)}</span>}
+          </span>
+        )}
       </td>
       <td className="px-3 py-2.5 text-right whitespace-nowrap tabular-nums">
         {s.settlementNet !== null ? (

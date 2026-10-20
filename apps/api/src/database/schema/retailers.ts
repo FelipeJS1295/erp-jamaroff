@@ -42,6 +42,16 @@ export const retailers = pgTable('retailers', {
   /** Días de pago desde la venta o la factura. Ej: 30, 60, 90 */
   paymentDays: integer('payment_days').notNull().default(30),
 
+  /**
+   * Desde qué fecha se cuentan los días de pago (cuentas por cobrar):
+   *  ORDEN     fecha de la orden (venta)
+   *  DESPACHO  fecha límite de despacho (aprox. de la entrega: los archivos no traen la entrega real)
+   */
+  paymentBase: varchar('payment_base', { length: 20 }).notNull().default('ORDEN'),
+
+  /** Contacto comercial / KAM (nombre, correo, teléfono) */
+  contact: text('contact'),
+
   /** Condiciones comerciales en texto libre (rappel, aportes, etc.) */
   commercialTerms: text('commercial_terms'),
 

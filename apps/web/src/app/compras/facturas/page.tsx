@@ -221,7 +221,7 @@ export default function FacturasPage() {
                       <th className="px-3 py-2.5 font-medium">Proveedor</th>
                       <th className="px-3 py-2.5 font-medium">N° factura</th>
                       <th className="px-3 py-2.5 font-medium">Cliente</th>
-                      <th className="px-3 py-2.5 font-medium">Ingresada</th>
+                      <th className="px-3 py-2.5 font-medium" title="Fecha de la factura (mes del IVA crédito)">Fecha</th>
                       <th className="px-3 py-2.5 text-right font-medium">Órdenes</th>
                       <th className="border-l border-slate-200 px-3 py-2.5 text-right font-medium">Neto</th>
                       <th className="px-3 py-2.5 text-right font-medium">IVA</th>
@@ -237,7 +237,7 @@ export default function FacturasPage() {
                       <tr key={i.id} className="hover:bg-slate-50">
                         <td className="px-3 py-2.5 font-medium">{i.supplier}</td>
                         <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{i.documentNumber}</td>
-                        <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">{dmy(i.createdAt)}</td>
+                        <td className="px-3 py-2.5 whitespace-nowrap tabular-nums">{dmy(i.issueDate)}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{i.orders}</td>
                         <td className="border-l border-slate-100 px-3 py-2.5 text-right tabular-nums">{clp(i.net)}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{clp(i.vat)}</td>

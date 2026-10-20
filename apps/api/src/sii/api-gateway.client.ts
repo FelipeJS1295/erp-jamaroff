@@ -216,6 +216,63 @@ export class ApiGatewayClient {
     };
   }
 
+  /**
+   * Crea una NOTA DE CRÉDITO (61) como BORRADOR en el Portal MIPYME del SII.
+   * No queda emitida: hay que firmarla y enviarla desde el portal.
+   * Devuelve el código del borrador.
+   */
+  async borradorNotaCredito(input: {
+    fecha: string;
+    receptorRut: string;
+    receptorNombre: string;
+    receptorDireccion?: string | null;
+    receptorComuna?: string | null;
+    item: string;
+    total: number;
+    boletaTipo: number;
+    boletaFolio: string;
+    boletaFecha: string;
+    /** 1 anula la boleta · 3 corrige montos */
+    codRef: 1 | 3;
+    razon: string;
+  }): Promise<{ draftCode: string; raw: unknown }> {
+    const { rut } = this.credentials();
+    const dte = {
+      Encabezado: {
+        // MntBruto = 1: los montos del detalle vienen con IVA incluido (igual que la boleta)
+        IdDoc: { TipoDTE: 61, FchEmis: input.fecha, MntBruto: 1 },
+        Emisor: { RUTEmisor: rut },
+        Receptor: {
+          RUTRecep: input.receptorRut,
+          RznSocRecep: cut(input.receptorNombre, 100),
+          GiroRecep: 'Particular',
+          ...(input.receptorDireccion ? { DirRecep: cut(input.receptorDireccion, 70) } : {}),
+          ...(input.receptorComuna ? { CmnaRecep: cut(input.receptorComuna, 20) } : {}),
+        },
+      },
+      Detalle: [{ NmbItem: cut(input.item, 80), QtyItem: 1, PrcItem: Math.round(input.total) }],
+      Referencia: [
+        {
+          TpoDocRef: input.boletaTipo,
+          FolioRef: input.boletaFolio,
+          FchRef: input.boletaFecha,
+          CodRef: input.codRef,
+          RazonRef: cut(input.razon, 90),
+        },
+      ],
+    };
+    const res = await this.post('/sii/mipyme/borradores/emitir', { dte });
+    if (!res.ok) {
+      const message = await this.errorMessage(res);
+      this.logger.warn(`MIPYME borrador ${res.status}: ${message}`);
+      throw new SiiRejectedError(message);
+    }
+    const body = (await res.json()) as { data?: { ehdr_codigo?: string | number } };
+    const code = body.data?.ehdr_codigo;
+    if (!code) throw new SiiUnknownError('El Portal MIPYME no devolvió el código del borrador');
+    return { draftCode: String(code), raw: body.data };
+  }
+
   /** PDF de una boleta ya emitida */
   async pdfBoleta(folio: number, dte: number, fecha: string): Promise<Buffer> {
     const { rut } = this.credentials();
