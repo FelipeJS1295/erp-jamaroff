@@ -51,9 +51,18 @@ export interface EboletaInput {
   total: number;
 }
 
+/** Datos de la empresa en eBoleta (los mismos que tiene configurados en el portal) */
+export interface EmisorInfo {
+  contribuyente: Record<string, unknown>;
+  sucursales: { codigo: number | string; direccion?: string | null; comuna?: string | null; [k: string]: unknown }[];
+  usuarios: { user: string; nombre?: string; es_representante?: boolean; [k: string]: unknown }[];
+}
+
 @Injectable()
 export class ApiGatewayClient {
   private readonly logger = new Logger(ApiGatewayClient.name);
+  /** Datos del emisor (se piden una vez y se guardan 6 horas) */
+  private emisorCache: { at: number; data: EmisorInfo } | null = null;
 
   /** ¿Está configurado? (para mostrar u ocultar los botones) */
   config() {
@@ -129,15 +138,47 @@ export class ApiGatewayClient {
     return text.slice(0, 300) || `Error ${res.status}`;
   }
 
+  /** Datos de la empresa en eBoleta: razón social, giro, sucursales y usuarios autorizados */
+  async emisor(refresh = false): Promise<EmisorInfo> {
+    if (!refresh && this.emisorCache && Date.now() - this.emisorCache.at < 6 * 3600 * 1000) return this.emisorCache.data;
+    const { rut } = this.credentials();
+    const res = await this.post(`/sii/eboleta/contribuyente/emisor/${rut}`, {}, 60000);
+    if (!res.ok) throw new SiiRejectedError(`No se pudieron leer los datos de la empresa en eBoleta: ${await this.errorMessage(res)}`);
+    const body = (await res.json()) as { data?: Partial<EmisorInfo> };
+    const data: EmisorInfo = {
+      contribuyente: body.data?.contribuyente ?? {},
+      sucursales: body.data?.sucursales ?? [],
+      usuarios: body.data?.usuarios ?? [],
+    };
+    this.emisorCache = { at: Date.now(), data };
+    return data;
+  }
+
+  /**
+   * Código SII de la sucursal desde donde se emite.
+   * SII_SUCURSAL en el .env; si no está, la primera sucursal de la empresa en eBoleta.
+   */
+  private async sucursal(): Promise<number> {
+    const fromEnv = Number(process.env.SII_SUCURSAL);
+    if (process.env.SII_SUCURSAL && Number.isFinite(fromEnv)) return fromEnv;
+    const { sucursales } = await this.emisor();
+    const codigo = Number(sucursales[0]?.codigo);
+    if (!Number.isFinite(codigo)) {
+      throw new SiiRejectedError('La empresa no tiene sucursales en eBoleta: revisa la configuración en el portal del SII');
+    }
+    return codigo;
+  }
+
   /** Emite una boleta en el portal eBoleta del SII */
   async emitirBoleta(input: EboletaInput): Promise<EboletaResult> {
     const { rut, userRut } = this.credentials();
+    const sucursal = await this.sucursal();
     const dte = {
       // El "vendedor" es quien emite en el portal: la persona con que se entra al SII
       vendedor: userRut,
       Encabezado: {
         IdDoc: { TipoDTE: input.tipo, MedioPago: 1 },
-        Emisor: { RUTEmisor: rut, CdgSIISucur: 0 },
+        Emisor: { RUTEmisor: rut, CdgSIISucur: sucursal },
         Receptor: {
           RUTRecep: input.receptorRut,
           // Largos máximos del formato DTE del SII

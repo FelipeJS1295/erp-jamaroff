@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { z } from 'zod';
-import { CurrentUser, type SessionUser } from '../auth/decorators.js';
+import { CurrentUser, Roles, type SessionUser } from '../auth/decorators.js';
 import { validate } from '../products/catalog.validation.js';
 import { SiiService } from './sii.service.js';
 
@@ -13,6 +13,7 @@ const orderSchema = z.object({
 /**
  * Boletas en el SII (portal eBoleta) a través de API Gateway.
  *   GET  /api/sii/status                                ¿está configurado?
+ *   GET  /api/sii/emisor                                datos de la empresa en eBoleta (diagnóstico)
  *   GET  /api/sii/boletas/preview?retailer=&order=      lo que se va a emitir
  *   POST /api/sii/boletas        { retailerCode, orderNumber }       emite una
  *   POST /api/sii/boletas/lote   { orders: [{ retailerCode, orderNumber }] }  emite varias
@@ -26,6 +27,13 @@ export class SiiController {
   @Get('status')
   status() {
     return this.sii.status();
+  }
+
+  /** Diagnóstico de la empresa en eBoleta (sucursales, usuarios autorizados). Solo administradores */
+  @Roles('ADMIN')
+  @Get('emisor')
+  emisor() {
+    return this.sii.emisor();
   }
 
   @Get('boletas/preview')

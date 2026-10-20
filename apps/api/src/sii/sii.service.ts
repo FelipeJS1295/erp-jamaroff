@@ -43,6 +43,24 @@ export class SiiService {
     return { enabled: cfg.enabled, emisorRut: cfg.rut, missing: cfg.missing };
   }
 
+  /** Diagnóstico: cómo ve el SII a la empresa en eBoleta (sucursales y usuarios autorizados) */
+  async emisor() {
+    const cfg = this.gateway.config();
+    try {
+      const data = await this.gateway.emisor(true);
+      return {
+        ok: true,
+        emisorRut: cfg.rut,
+        usuarioRut: cfg.userRut,
+        sucursalUsada: process.env.SII_SUCURSAL ?? data.sucursales[0]?.codigo ?? null,
+        usuarioAutorizado: data.usuarios.some((u) => String(u.user).replace(/\./g, '').toUpperCase() === cfg.userRut),
+        ...data,
+      };
+    } catch (err) {
+      return { ok: false, emisorRut: cfg.rut, usuarioRut: cfg.userRut, error: (err as Error).message };
+    }
+  }
+
   private async retailerId(code: string) {
     const [r] = await this.db.select({ id: retailers.id }).from(retailers).where(eq(retailers.code, code.toUpperCase()));
     if (!r) throw new BadRequestException(`Retailer "${code}" no existe`);
