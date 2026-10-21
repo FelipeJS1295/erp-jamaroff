@@ -52,6 +52,20 @@ async function get(cfg: ProviderConfig, path: string) {
   return (json ?? {}) as Record<string, unknown>;
 }
 
+/** Reintenta cuando Walmart responde un error temporal (5xx, 429) */
+async function retry<T>(fn: () => Promise<T>, progress: (m: string) => void, tries = 4): Promise<T> {
+  for (let n = 1; ; n++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = err instanceof ProviderError ? (err.status ?? 0) : 0;
+      if (n >= tries || !(status >= 500 || status === 429)) throw err;
+      progress(`Walmart respondió ${status}: reintentando (${n}/${tries - 1})…`);
+      await new Promise((r) => setTimeout(r, 2000 * n));
+    }
+  }
+}
+
 /** Monto con IVA de un cargo (Walmart separa monto e impuesto) */
 const gross = (c: Record<string, unknown>) => (num(pick(c, 'chargeAmount.amount')) ?? 0) + (num(pick(c, 'tax.taxAmount.amount')) ?? 0);
 
@@ -85,7 +99,8 @@ function normalizeOrder(o: Record<string, unknown>): NormalizedOrder {
     status: [...new Set(items.map((i) => i.status).filter(Boolean))].join(', ') || null,
     customerName: str(pick(o, 'shippingInfo.postalAddress.name')),
     // Chile: el RUT puede venir en distintos campos según la versión de la API
-    customerRut: findDeep(o, /^(rut|documentNumber|taxId|nationalId|buyerTaxId)$/i),
+    // Chile: el RUT viene en customerRfc
+    customerRut: str(pick(o, 'customerRfc')) ?? findDeep(o, /^(rut|customerRfc|documentNumber|taxId|nationalId|buyerTaxId)$/i),
     customerEmail: str(pick(o, 'customerEmailId')),
     address: [str(pick(o, 'shippingInfo.postalAddress.address1')), str(pick(o, 'shippingInfo.postalAddress.address2'))].filter(Boolean).join(' ') || null,
     commune: str(pick(o, 'shippingInfo.postalAddress.city')),
@@ -118,18 +133,33 @@ export const walmart: RetailProvider = {
     return { message: `Conexión OK${total !== null ? `: ${total} órdenes en los últimos 30 días` : ''}`, sample: body };
   },
 
+  /**
+   * Igual que la prueba de conexión (que sí funciona): solo createdStartDate y páginas
+   * chicas. El fin del rango se filtra aquí, sin mandarlo a Walmart.
+   */
   async orders(cfg, from, to, progress) {
     const { start, end } = dayRange(from, to);
     const out: NormalizedOrder[] = [];
-    let path: string | null =
-      `/v3/orders?createdStartDate=${encodeURIComponent(start.toISOString())}&createdEndDate=${encodeURIComponent(end.toISOString())}&limit=200`;
-    for (let page = 0; path && page < 200; page++) {
-      const body = await get(cfg, path);
+    const seen = new Set<string>();
+    const query = `createdStartDate=${encodeURIComponent(start.toISOString())}&limit=10`;
+    let cursor: string | null = null;
+    let read = 0;
+    for (let page = 0; page < 1000; page++) {
+      // Chile entrega un cursor opaco ("0%3A1~0%3A0", ya codificado) que va en &cursor=
+      const path: string = cursor?.startsWith('?') ? `/v3/orders${cursor}` : `/v3/orders?${query}${cursor ? `&cursor=${cursor}` : ''}`;
+      const body = await retry(() => get(cfg, path), progress);
       const orders = arr(pick(body, 'list.elements.order'));
-      out.push(...orders.map(normalizeOrder));
-      progress(`Walmart: ${out.length} órdenes leídas…`);
+      read += orders.length;
+      for (const o of orders.map(normalizeOrder)) {
+        if (seen.has(o.externalId) || (o.orderDate && o.orderDate > end)) continue;
+        seen.add(o.externalId);
+        out.push(o);
+      }
+      const total = num(pick(body, 'list.meta.totalCount'));
+      progress(`Walmart: ${read}${total !== null ? ` de ${total}` : ''} órdenes leídas…`);
       const next = str(pick(body, 'list.meta.nextCursor'));
-      path = next && orders.length ? `/v3/orders${next.startsWith('?') ? next : `?${next}`}` : null;
+      if (!next || !orders.length || next === cursor || (total !== null && read >= total)) break;
+      cursor = next;
     }
     return out;
   },

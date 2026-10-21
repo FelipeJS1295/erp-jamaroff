@@ -1,11 +1,12 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ExternalLink, PlugZap, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Loader2, PlugZap, XCircle } from 'lucide-react';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth';
 import { Badge, Button, ErrorText, Field, Loading, PageHeader, input } from '@/components/kit';
-import { api, type RetailApiConnection } from '@/lib/api';
+import { api, type RetailApiConnection, type RetailSyncJob } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
 const STATUS = {
@@ -52,7 +53,26 @@ function ConnectionCard({ c }: { c: RetailApiConnection }) {
       refresh();
     },
   });
-  const test = useMutation({ mutationFn: () => api.testRetailConnection(c.provider), onSettled: refresh });
+  const test = useMutation({
+    mutationFn: () => api.testRetailConnection(c.provider),
+    onSettled: refresh,
+    onSuccess: (r) => setJob(r.job ?? null),
+  });
+  // Al conectar se traen solas las ventas del período: se muestra el avance
+  const [job, setJob] = useState<RetailSyncJob | null>(null);
+  useEffect(() => {
+    if (!job || job.status !== 'RUNNING') return;
+    const t = setTimeout(async () => {
+      const next = await api.retailJob(job.id).catch(() => ({ ...job, status: 'ERROR' as const, message: 'Se perdió el avance' }));
+      setJob(next);
+      if (next.status !== 'RUNNING') {
+        refresh();
+        queryClient.invalidateQueries({ queryKey: ['retail-orders'] });
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job]);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
@@ -112,7 +132,7 @@ function ConnectionCard({ c }: { c: RetailApiConnection }) {
           )}
           {canEdit && (
             <Button variant="secondary" onClick={() => test.mutate()} loading={test.isPending} disabled={!c.configured}>
-              Probar conexión
+              Conectar y traer ventas
             </Button>
           )}
           {save.isSuccess && <span className="text-sm text-emerald-700">Guardado</span>}
@@ -124,6 +144,17 @@ function ConnectionCard({ c }: { c: RetailApiConnection }) {
             <p className="flex items-center gap-1.5 font-medium">
               {test.data.ok ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />} {test.data.message}
             </p>
+            {job && (
+              <p className={cn('mt-1 flex items-center gap-1.5', job.status === 'ERROR' ? 'text-red-700' : 'text-slate-700')}>
+                {job.status === 'RUNNING' ? <Loader2 className="size-4 animate-spin" /> : job.status === 'DONE' ? <CheckCircle2 className="size-4" /> : <XCircle className="size-4" />}
+                {job.message}
+                {job.status === 'DONE' && (
+                  <Link href="/api-retail/ventas" className="ml-1 font-medium underline">
+                    Ver ventas
+                  </Link>
+                )}
+              </p>
+            )}
             {test.data.sample && (
               <details className="mt-1">
                 <summary className="cursor-pointer text-xs">Ver respuesta del retailer</summary>

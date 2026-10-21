@@ -35,6 +35,21 @@ async function call(cfg: ProviderConfig, action: string, params: Record<string, 
   return body;
 }
 
+/**
+ * Órdenes de una respuesta. En JSON, Falabella a veces anida cada orden dentro de "Order"
+ * ({ Orders: [{ Order: {...} }] }) y a veces no ({ Orders: { Order: [...] } }).
+ */
+function ordersOf(body: Record<string, unknown>): Record<string, unknown>[] {
+  return arr<Record<string, unknown>>(pick(body, 'SuccessResponse.Body.Orders.Order', 'SuccessResponse.Body.Orders')).flatMap((o) =>
+    'Order' in o && !('OrderId' in o) ? arr<Record<string, unknown>>(o.Order) : [o],
+  );
+}
+
+const orderId = (o: Record<string, unknown>) => {
+  const id = str(pick(o, 'OrderId', 'orderId', 'OrderID'));
+  return id && /^\d+$/.test(id) ? id : null;
+};
+
 const orderItems = (o: Record<string, unknown>): NormalizedItem[] =>
   arr(pick(o, 'OrderItems.OrderItem', 'OrderItems')).map((i) => ({
     externalItemId: String(pick(i, 'OrderItemId') ?? pick(i, 'Sku')),
@@ -56,7 +71,7 @@ function normalizeOrder(o: Record<string, unknown>, items: NormalizedItem[]): No
   const shipping = items.reduce((n, i) => n + (i.shippingAmount ?? 0), 0);
   const paid = items.reduce((n, i) => n + (i.paidPrice ?? 0), 0);
   return {
-    externalId: String(pick(o, 'OrderId')),
+    externalId: orderId(o) ?? String(pick(o, 'OrderNumber')),
     orderNumber: str(pick(o, 'OrderNumber')),
     customerOrderId: null,
     orderDate: toDate(pick(o, 'CreatedAt')),
@@ -94,34 +109,41 @@ export const falabella: RetailProvider = {
     return { message: `Conexión OK${total !== null ? `: ${total} órdenes en los últimos 30 días` : ''}`, sample: pick(body, 'SuccessResponse.Body') };
   },
 
+  /**
+   * Órdenes con la misma llamada que la prueba de conexión (GetOrders) y los productos de
+   * cada orden con GetOrderItems (una orden por llamada: evita el error E056 de las listas).
+   */
   async orders(cfg, from, to, progress) {
     const { start, end } = dayRange(from, to);
     const orders: Record<string, unknown>[] = [];
     for (let offset = 0; offset < 20000; offset += 100) {
-      const body = await call(cfg, 'GetOrders', {
-        CreatedAfter: isoSeconds(start),
-        CreatedBefore: isoSeconds(end),
-        Limit: '100',
-        Offset: String(offset),
-        SortBy: 'created_at',
-        SortDirection: 'ASC',
-      });
-      const page = arr(pick(body, 'SuccessResponse.Body.Orders.Order', 'SuccessResponse.Body.Orders'));
+      const body = await call(cfg, 'GetOrders', { CreatedAfter: isoSeconds(start), CreatedBefore: isoSeconds(end), Limit: '100', Offset: String(offset) });
+      const page = ordersOf(body);
       orders.push(...page);
       progress(`Falabella: ${orders.length} órdenes leídas…`);
       if (page.length < 100) break;
     }
-    // Productos de cada orden, de a 50 órdenes por llamada
-    const itemsByOrder = new Map<string, NormalizedItem[]>();
-    for (let i = 0; i < orders.length; i += 50) {
-      const ids = orders.slice(i, i + 50).map((o) => String(pick(o, 'OrderId')));
-      const body = await call(cfg, 'GetMultipleOrderItems', { OrderIdList: `[${ids.join(',')}]` });
-      for (const o of arr(pick(body, 'SuccessResponse.Body.Orders.Order', 'SuccessResponse.Body.Orders'))) {
-        itemsByOrder.set(String(pick(o, 'OrderId')), orderItems(o));
-      }
-      progress(`Falabella: productos de ${Math.min(i + 50, orders.length)} de ${orders.length} órdenes…`);
+    const valid = orders.filter((o) => orderId(o));
+    if (orders.length && !valid.length) {
+      throw new ProviderError(`Falabella devolvió órdenes sin OrderId reconocible. Campos: ${Object.keys(orders[0]).slice(0, 20).join(', ')}`);
     }
-    return orders.map((o) => normalizeOrder(o, itemsByOrder.get(String(pick(o, 'OrderId'))) ?? []));
+    const result: NormalizedOrder[] = [];
+    let failed = 0;
+    for (const [n, o] of valid.entries()) {
+      let items: NormalizedItem[] = [];
+      try {
+        const body = await call(cfg, 'GetOrderItems', { OrderId: orderId(o)! });
+        items = orderItems((pick(body, 'SuccessResponse.Body') ?? {}) as Record<string, unknown>);
+      } catch {
+        // Sin productos igual se guarda la orden (con el total que informa Falabella)
+        failed++;
+      }
+      result.push(normalizeOrder(o, items));
+      if (n % 5 === 4 || n === valid.length - 1) {
+        progress(`Falabella: productos de ${n + 1} de ${valid.length} órdenes…${failed ? ` (${failed} sin detalle)` : ''}`);
+      }
+    }
+    return result;
   },
 
   async products(cfg, progress) {

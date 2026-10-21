@@ -993,7 +993,7 @@ export const api = {
   saveRetailConnection: (provider: RetailProviderCode, data: { enabled: boolean; settings: Record<string, string>; secrets: Record<string, string> }) =>
     request<{ ok: boolean }>(`/retail-api/connections/${provider}`, { method: 'PUT', body: JSON.stringify(data) }),
   testRetailConnection: (provider: RetailProviderCode) =>
-    request<{ ok: boolean; message: string; sample: string | null }>(`/retail-api/connections/${provider}/test`, { method: 'POST' }),
+    request<{ ok: boolean; message: string; sample: string | null; job?: RetailSyncJob }>(`/retail-api/connections/${provider}/test`, { method: 'POST' }),
   syncRetailOrders: (provider: RetailProviderCode, from: string, to: string) =>
     request<RetailSyncJob>(`/retail-api/${provider}/orders/sync`, { method: 'POST', body: JSON.stringify({ from, to }) }),
   syncRetailProducts: (provider: RetailProviderCode) => request<RetailSyncJob>(`/retail-api/${provider}/products/sync`, { method: 'POST' }),

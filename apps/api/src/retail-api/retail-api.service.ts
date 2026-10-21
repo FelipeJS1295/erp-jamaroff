@@ -99,7 +99,10 @@ export class RetailApiService {
     try {
       const r = await p.test(cfg);
       await this.setStatus(p.code, 'OK', null, { lastTestAt: new Date() });
-      return { ok: true, message: r.message, sample: truncate(r.sample) };
+      // Si conecta, se traen altiro las ventas del período (desde el 20 del mes pasado)
+      const { from, to } = defaultRange();
+      const job = this.startOrders(p.code, from, to);
+      return { ok: true, message: r.message, sample: truncate(r.sample), job };
     } catch (err) {
       const message = errMessage(err);
       await this.setStatus(p.code, 'ERROR', message, { lastTestAt: new Date() });
@@ -374,6 +377,13 @@ export class RetailApiService {
       masterSku: r.master_sku,
     }));
   }
+}
+
+/** Desde el 20 del mes pasado hasta hoy (hora de Chile) */
+export function defaultRange() {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+  const [y, m] = today.split('-').map(Number);
+  return { from: new Date(Date.UTC(y, m - 2, 20)).toISOString().slice(0, 10), to: today };
 }
 
 const cut = (v: string | null | undefined, max: number) => (v === null || v === undefined ? null : String(v).slice(0, max));
