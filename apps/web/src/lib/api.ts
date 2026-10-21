@@ -862,7 +862,9 @@ export const api = {
     healthResponseSchema.parse(await request<unknown>('/health')),
 
   /** Ventas cargadas (las más recientes primero) */
-  listSales: () => request<SaleRow[]>('/sales'),
+  /** Ventas por fecha de la orden (AAAA-MM-DD). Sin fechas: desde el 20 del mes pasado hasta hoy */
+  listSales: (from?: string, to?: string) =>
+    request<SaleRow[]>(`/sales${from && to ? `?from=${from}&to=${to}` : ''}`),
 
     /** Datos del cliente de una orden (para la boleta o factura del SII) */
   customerData: (retailerCode: string, orderNumber: string) =>

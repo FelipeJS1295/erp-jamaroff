@@ -44,8 +44,20 @@ const FILTERS: { id: Filter; label: string; match: (s: SaleRow) => boolean }[] =
   { id: 'needsCreditNote', label: 'Cancelada con boleta', match: (s) => s.cancelled && creditable(s) },
 ];
 
+/** Hoy en Chile (AAAA-MM-DD) */
+const todayCL = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+
+/** Rango por defecto: desde el día 20 del mes pasado hasta hoy */
+function defaultRange() {
+  const today = todayCL();
+  const [y, m] = today.split('-').map(Number);
+  return { from: new Date(Date.UTC(y, m - 2, 20)).toISOString().slice(0, 10), to: today };
+}
+
 export default function VerVentasPage() {
-  const sales = useQuery({ queryKey: ['sales'], queryFn: api.listSales });
+  const [range, setRange] = useState(defaultRange);
+  const sales = useQuery({ queryKey: ['sales', range.from, range.to], queryFn: () => api.listSales(range.from, range.to) });
+  const isDefaultRange = range.from === defaultRange().from && range.to === defaultRange().to;
   // ¿Se pueden emitir boletas en el SII desde el sistema? (API Gateway configurado)
   const sii = useQuery({ queryKey: ['sii-status'], queryFn: api.siiStatus, staleTime: 5 * 60_000 });
   const { canEdit } = useAuth();
@@ -129,7 +141,7 @@ export default function VerVentasPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-8 py-10">
-      <header className="mb-6 flex items-end justify-between">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Ventas</h1>
           <p className="mt-1 text-sm text-slate-500">
@@ -137,13 +149,44 @@ export default function VerVentasPage() {
             proveedor y lo que queda.
           </p>
         </div>
-        <button
-          onClick={() => sales.refetch()}
-          className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm hover:bg-slate-50"
-        >
-          <RefreshCw className={cn('size-4', sales.isFetching && 'animate-spin')} />
-          Actualizar
-        </button>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-slate-500">
+            Desde
+            <input
+              type="date"
+              value={range.from}
+              max={range.to}
+              onChange={(e) => e.target.value && setRange((r) => ({ ...r, from: e.target.value }))}
+              className="mt-0.5 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+            />
+          </label>
+          <label className="text-xs text-slate-500">
+            Hasta
+            <input
+              type="date"
+              value={range.to}
+              min={range.from}
+              onChange={(e) => e.target.value && setRange((r) => ({ ...r, to: e.target.value }))}
+              className="mt-0.5 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+            />
+          </label>
+          {!isDefaultRange && (
+            <button
+              onClick={() => setRange(defaultRange())}
+              className="px-1 py-1.5 text-sm font-medium text-brand-600 hover:underline"
+              title="Desde el 20 del mes pasado hasta hoy"
+            >
+              Volver al período actual
+            </button>
+          )}
+          <button
+            onClick={() => sales.refetch()}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm hover:bg-slate-50"
+          >
+            <RefreshCw className={cn('size-4', sales.isFetching && 'animate-spin')} />
+            Actualizar
+          </button>
+        </div>
       </header>
       <MipymeSync hasDrafts={(sales.data ?? []).some((x) => x.receipt?.status === 'BORRADOR')} className="mb-4" />
 
@@ -221,11 +264,11 @@ export default function VerVentasPage() {
           </p>
         ) : sales.data?.length === 0 ? (
           <div className="py-16 text-center text-sm text-slate-500">
-            Aún no hay ventas.{' '}
+            No hay ventas entre el {range.from.split('-').reverse().join('/')} y el {range.to.split('-').reverse().join('/')}. Cambia las fechas o{' '}
             <Link href="/ventas/cargas" className="font-medium text-brand-600 hover:underline">
-              Carga un archivo
-            </Link>{' '}
-            para empezar.
+              carga un archivo
+            </Link>
+            .
           </div>
         ) : rows.length === 0 ? (
           <p className="py-16 text-center text-sm text-slate-500">No hay ventas con este filtro.</p>
@@ -369,8 +412,8 @@ export default function VerVentasPage() {
         </div>
       )}
 
-      {sales.data && sales.data.length >= 500 && (
-        <p className="mt-2 text-xs text-slate-400">Se muestran las 500 órdenes más recientes.</p>
+      {sales.data && sales.data.length >= 5000 && (
+        <p className="mt-2 text-xs text-slate-400">Se muestran las 5.000 órdenes más recientes del rango: acorta las fechas para ver el resto.</p>
       )}
     </div>
   );

@@ -45,10 +45,19 @@ export class SalesController {
   /**
    * Ventas agrupadas por orden (las más recientes primero), con: precio de venta, boleta,
    * liquidación, factura del proveedor, IVA y total (margen).
+   * ?from=AAAA-MM-DD&to=AAAA-MM-DD filtra por fecha de la orden. Sin fechas: desde el día 20
+   * del mes pasado hasta hoy.
    */
   @Get()
-  list() {
-    return this.sales.listWithMargin();
+  list(@Query('from') from?: string, @Query('to') to?: string) {
+    const date = /^\d{4}-\d{2}-\d{2}$/;
+    if ((from && !date.test(from)) || (to && !date.test(to))) throw new BadRequestException('Fecha inválida (AAAA-MM-DD)');
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
+    const [y, m] = today.split('-').map(Number);
+    const defaultFrom = new Date(Date.UTC(y, m - 2, 20)).toISOString().slice(0, 10);
+    const range = { from: from || defaultFrom, to: to || today };
+    if (range.from > range.to) throw new BadRequestException('La fecha "desde" es posterior a "hasta"');
+    return this.sales.listWithMargin(5000, range);
   }
 
   /** Datos del cliente de una orden, para hacer la boleta o factura en el SII */

@@ -141,7 +141,11 @@ export class SalesService {
   ) {}
 
   /** Ventas agrupadas por orden, con lo liquidado, lo pagado al proveedor, el IVA y el total */
-  async listWithMargin(limit = LIMIT): Promise<SaleWithMargin[]> {
+  async listWithMargin(limit = LIMIT, range?: { from: string; to: string }): Promise<SaleWithMargin[]> {
+    // Rango de fechas de la orden (AAAA-MM-DD, ambos incluidos)
+    const having = range
+      ? sql`having min(s.order_date)::date between ${range.from}::date and ${range.to}::date`
+      : sql``;
     const [{ rows: groups }, money] = await Promise.all([
       this.db.execute<SaleGroup>(sql`
         select
@@ -174,6 +178,7 @@ export class SalesService {
         join retailers r on r.id = s.retailer_id
         left join customer_receipts cr on cr.retailer_id = s.retailer_id and cr.order_number = s.order_number
         group by 1, 2, 3, 4
+        ${having}
         order by min(s.order_date) desc nulls last, s.order_number desc
         limit ${limit}
       `),
