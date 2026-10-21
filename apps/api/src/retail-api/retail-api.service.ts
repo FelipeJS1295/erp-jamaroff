@@ -195,12 +195,18 @@ export class RetailApiService {
           raw: o.raw,
           syncedAt: new Date(),
         };
+        // Si esta vez el retailer no entregó el detalle de productos, se conservan los que ya
+        // estaban guardados (y el total/envío calculados con ellos)
+        const keepItems = o.items.length === 0;
+        const update = keepItems
+          ? Object.fromEntries(Object.entries(values).filter(([k]) => !['itemsCount', 'total', 'shippingTotal'].includes(k)))
+          : values;
         const [row] = await tx
           .insert(retailApiOrders)
           .values(values)
-          .onConflictDoUpdate({ target: [retailApiOrders.provider, retailApiOrders.externalId], set: values })
+          .onConflictDoUpdate({ target: [retailApiOrders.provider, retailApiOrders.externalId], set: update })
           .returning({ id: retailApiOrders.id });
-        await tx.delete(retailApiOrderItems).where(eq(retailApiOrderItems.orderId, row.id));
+        if (!keepItems) await tx.delete(retailApiOrderItems).where(eq(retailApiOrderItems.orderId, row.id));
         if (o.items.length) {
           // Si el retailer repite el id de línea, se le agrega un sufijo para no chocar
           const seen = new Map<string, number>();
@@ -276,6 +282,20 @@ export class RetailApiService {
       synced_at: string;
       items: { sellerSku: string | null; name: string | null; quantity: number; paidPrice: number | null; status: string | null }[] | null;
       in_erp: boolean;
+      receipt_id: string | null;
+      receipt_number: string | null;
+      receipt_status: string | null;
+      receipt_type: number | null;
+      receipt_total: number | null;
+      nc_total: number | null;
+      settle_lines: number;
+      settle_net: number | null;
+      settle_commission: number | null;
+      settle_charges: number | null;
+      settle_status: string | null;
+      settle_statement: string | null;
+      supplier_net: number | null;
+      supplier_docs: string | null;
     }>(sql`
       select o.id, o.provider, o.external_id, o.order_number, o.customer_order_id,
         to_char(o.order_date at time zone 'America/Santiago', 'YYYY-MM-DD HH24:MI') as order_date,
@@ -288,8 +308,38 @@ export class RetailApiService {
           select 1 from sales_records s join retailers r on r.id = s.retailer_id
           where r.code = o.provider
             and (s.order_number in (o.order_number, o.customer_order_id) or s.order_id in (o.order_number, o.customer_order_id))
-        ) as in_erp
+        ) as in_erp,
+        -- Boleta o factura emitida al cliente (por N° de orden)
+        rc.id::text as receipt_id, rc.receipt_number, rc.status as receipt_status, rc.document_type as receipt_type,
+        rc.total_gross::float8 as receipt_total, nc.total::float8 as nc_total,
+        -- Liquidación del retailer: neto pagado, comisión y cargos (envío/logística)
+        coalesce(st.lines, 0)::int as settle_lines, st.net::float8 as settle_net, st.commission::float8 as settle_commission,
+        st.charges::float8 as settle_charges, st.payment_status as settle_status, st.statement as settle_statement,
+        -- Factura del proveedor asignada a la orden
+        sp.net::float8 as supplier_net, sp.docs as supplier_docs
       from retail_api_orders o
+      left join retailers rt on rt.code = o.provider
+      left join lateral (
+        select cr.id, cr.receipt_number, cr.status, cr.document_type, cr.total_gross from customer_receipts cr
+        where cr.retailer_id = rt.id and cr.order_number in (o.order_number, o.customer_order_id) limit 1
+      ) rc on true
+      left join lateral (
+        select sum(n.amount_gross) as total from credit_notes n
+        where n.retailer_id = rt.id and n.order_number in (o.order_number, o.customer_order_id) and n.status in ('EMITIDA', 'REGISTRADA')
+      ) nc on true
+      left join lateral (
+        select count(*) as lines, sum(x.amount_gross) as net,
+          sum(case when x.kind = 'COMMISSION' then x.amount_gross end) as commission,
+          sum(case when x.kind in ('COMMISSION', 'SHIPPING', 'LOGISTICS') and x.amount_gross < 0 then -x.amount_gross end) as charges,
+          max(x.payment_status) as payment_status, max(x.statement_number) as statement
+        from settlement_records x
+        where x.retailer_id = rt.id and x.order_number in (o.order_number, o.customer_order_id)
+      ) st on true
+      left join lateral (
+        select sum(pl.amount_net) as net, string_agg(distinct d.document_number, ', ') as docs
+        from purchase_document_lines pl join purchase_documents d on d.id = pl.document_id
+        where pl.retailer_id = rt.id and pl.order_number in (o.order_number, o.customer_order_id)
+      ) sp on true
       where (o.order_date at time zone 'America/Santiago')::date between ${from}::date and ${to}::date
         ${provider ? sql`and o.provider = ${provider.toUpperCase()}` : sql``}
       order by o.order_date desc nulls last
@@ -315,7 +365,51 @@ export class RetailApiService {
       items: r.items ?? [],
       inErp: r.in_erp,
       syncedAt: r.synced_at,
+      ...money(r),
     }));
+
+    /** Boleta, liquidación, factura del proveedor, IVA y resultado de la orden (igual que en Ventas) */
+    function money(r: (typeof rows)[number]) {
+      const vatOf = (gross: number) => gross - gross / 1.19;
+      const cancelled = /cancel|anulad/i.test(r.status ?? '');
+      const receipt = r.receipt_id
+        ? {
+            id: r.receipt_id,
+            number: r.receipt_number!,
+            status: r.receipt_status!,
+            documentType: r.receipt_type ?? 39,
+            totalGross: Math.round(r.receipt_total ?? 0),
+            creditNotes: Math.round(r.nc_total ?? 0),
+          }
+        : null;
+      const settlement =
+        r.settle_lines > 0
+          ? {
+              net: Math.round(r.settle_net ?? 0),
+              commission: Math.round(r.settle_commission ?? 0),
+              charges: Math.round(r.settle_charges ?? 0),
+              paymentStatus: r.settle_status,
+              statement: r.settle_statement,
+            }
+          : null;
+      const supplier =
+        r.supplier_net !== null
+          ? { net: Math.round(r.supplier_net), gross: Math.round(r.supplier_net * 1.19), documents: r.supplier_docs?.split(', ') ?? [] }
+          : null;
+      // IVA: el de la boleta (menos notas de crédito) o del total de la orden − IVA compra − IVA de los cargos del retailer
+      const saleGross = cancelled ? 0 : receipt ? receipt.totalGross - receipt.creditNotes : (r.total ?? 0);
+      const vat = Math.round(vatOf(saleGross) - (supplier ? supplier.gross - supplier.net : 0) - (settlement ? vatOf(settlement.charges) : 0));
+      const result = settlement && supplier && !cancelled ? settlement.net - supplier.gross - vat : null;
+      return {
+        cancelled,
+        receipt,
+        settlement,
+        supplier,
+        vat,
+        result,
+        marginPct: result !== null && r.total ? (result / r.total) * 100 : null,
+      };
+    }
   }
 
   /** Respuesta completa del retailer para una orden (para revisar campos) */

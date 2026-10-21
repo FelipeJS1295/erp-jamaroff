@@ -1,13 +1,13 @@
 'use client';
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Search } from 'lucide-react';
 import Link from 'next/link';
 import { Fragment, useMemo, useState } from 'react';
 import { useAuth } from '@/components/auth';
-import { Badge, ErrorText, Loading, Modal, PageHeader, Stat, clp, td, th } from '@/components/kit';
+import { ErrorText, Loading, Modal, PageHeader, Stat, clp, td, th } from '@/components/kit';
 import { RetailSyncButton } from '@/components/retail-sync';
-import { api, type RetailProviderCode } from '@/lib/api';
+import { api, type RetailApiOrder, type RetailProviderCode } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
 const todayCL = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago' }).format(new Date());
@@ -18,11 +18,21 @@ function defaultRange() {
 }
 const dmyTime = (v: string | null) => (v ? `${v.slice(8, 10)}/${v.slice(5, 7)}/${v.slice(0, 4)} ${v.slice(11)}` : '—');
 
+type Filter = 'all' | 'noReceipt' | 'noSettlement' | 'noSupplier' | 'done';
+const FILTERS: { id: Filter; label: string; match: (o: RetailApiOrder) => boolean }[] = [
+  { id: 'all', label: 'Todas', match: () => true },
+  { id: 'done', label: 'Con resultado', match: (o) => o.result !== null },
+  { id: 'noReceipt', label: 'Falta boleta', match: (o) => !o.cancelled && !o.receipt },
+  { id: 'noSettlement', label: 'Falta liquidación', match: (o) => !o.cancelled && !o.settlement },
+  { id: 'noSupplier', label: 'Falta factura proveedor', match: (o) => !o.cancelled && !o.supplier },
+];
+
 export default function RetailApiSalesPage() {
   const { canEdit } = useAuth();
   const [range, setRange] = useState(defaultRange);
   const [provider, setProvider] = useState<RetailProviderCode | ''>('');
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [rawFor, setRawFor] = useState<string | null>(null);
   const connections = useQuery({ queryKey: ['retail-connections'], queryFn: api.retailConnections });
@@ -32,15 +42,18 @@ export default function RetailApiSalesPage() {
   const all = orders.data ?? [];
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const f = FILTERS.find((x) => x.id === filter)!;
     return all.filter(
       (o) =>
         (!provider || o.provider === provider) &&
+        f.match(o) &&
         (!q ||
           [o.orderNumber, o.customerOrderId, o.customerName, o.customerRut, ...o.items.map((i) => `${i.name} ${i.sellerSku}`)]
             .filter(Boolean)
             .some((v) => v!.toLowerCase().includes(q))),
     );
-  }, [all, provider, search]);
+  }, [all, provider, search, filter]);
+  const withResult = rows.filter((o) => o.result !== null);
   const syncTargets = provider ? ready.filter((c) => c.provider === provider) : ready;
 
   return (
@@ -91,14 +104,33 @@ export default function RetailApiSalesPage() {
         </p>
       )}
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-4">
-        <Stat label="Órdenes" value={rows.length.toLocaleString('es-CL')} />
-        <Stat label="Total vendido (con IVA)" value={clp(rows.reduce((n, o) => n + (o.total ?? 0), 0))} />
-        <Stat label="También en Ventas (archivo)" value={rows.filter((o) => o.inErp).length} tone="green" />
-        <Stat label="Solo por API" value={rows.filter((o) => !o.inErp).length} tone={rows.some((o) => !o.inErp) ? 'amber' : undefined} />
+      <div className="mb-4 grid gap-3 sm:grid-cols-5">
+        <Stat label="Órdenes" value={rows.length.toLocaleString('es-CL')} hint={`${rows.filter((o) => !o.inErp).length} solo por API`} />
+        <Stat label="Total vendido (con IVA)" value={clp(rows.reduce((n, o) => n + (o.cancelled ? 0 : (o.total ?? 0)), 0))} />
+        <Stat label="Liquidado" value={clp(rows.reduce((n, o) => n + (o.settlement?.net ?? 0), 0))} />
+        <Stat label="Proveedor (con IVA)" value={clp(rows.reduce((n, o) => n + (o.supplier?.gross ?? 0), 0))} />
+        <Stat
+          label={`Resultado (${withResult.length} con liquidación y factura)`}
+          value={clp(withResult.reduce((n, o) => n + (o.result ?? 0), 0))}
+          tone={withResult.reduce((n, o) => n + (o.result ?? 0), 0) >= 0 ? 'green' : 'red'}
+        />
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="inline-flex flex-wrap rounded-md border border-slate-200 bg-white p-0.5">
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilter(f.id)}
+              className={cn('rounded px-3 py-1.5 text-sm', filter === f.id ? 'bg-slate-800 font-medium text-white' : 'text-slate-600 hover:bg-slate-100')}
+            >
+              {f.label}
+              <span className={cn('ml-1.5 text-xs', filter === f.id ? 'text-white/70' : 'text-slate-400')}>
+                {all.filter((o) => (!provider || o.provider === provider) && f.match(o)).length}
+              </span>
+            </button>
+          ))}
+        </div>
         <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5">
           {[{ provider: '' as const, label: 'Todos' }, ...(connections.data ?? [])].map((c) => (
             <button
@@ -141,9 +173,12 @@ export default function RetailApiSalesPage() {
                   <th className={th}>Fecha</th>
                   <th className={th}>Cliente</th>
                   <th className={th}>Productos</th>
-                  <th className={th}>Estado</th>
                   <th className={cn(th, 'text-right')}>Total</th>
-                  <th className={th}>En Ventas</th>
+                  <th className={cn(th, 'border-l border-slate-200')}>Boleta</th>
+                  <th className={cn(th, 'text-right')}>Liquidación</th>
+                  <th className={cn(th, 'text-right')}>Proveedor</th>
+                  <th className={cn(th, 'text-right')} title="IVA venta − IVA compra − IVA de comisión y envío">IVA</th>
+                  <th className={cn(th, 'text-right')} title="Liquidación − Proveedor − IVA">Resultado</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -167,6 +202,8 @@ export default function RetailApiSalesPage() {
                         <td className={cn(td, 'font-mono text-xs')}>
                           {o.provider === 'WALMART' ? (o.customerOrderId ?? o.orderNumber) : o.orderNumber}
                           {o.provider === 'WALMART' && <span className="block text-slate-400">{o.orderNumber}</span>}
+                          <span className={cn('mt-0.5 block font-sans text-[11px]', o.cancelled ? 'text-red-600' : 'text-slate-400')}>{o.status ?? '—'}</span>
+                          {!o.inErp && <span className="block font-sans text-[11px] text-amber-600">solo por API</span>}
                         </td>
                         <td className={cn(td, 'whitespace-nowrap tabular-nums')}>{dmyTime(o.orderDate)}</td>
                         <td className={td}>
@@ -176,17 +213,49 @@ export default function RetailApiSalesPage() {
                         <td className={cn(td, 'max-w-72')}>
                           {o.items.length === 1 ? o.items[0].name : `${o.items.length} productos`}
                         </td>
-                        <td className={cn(td, 'text-xs')}>{o.status ?? '—'}</td>
-                        <td className={cn(td, 'text-right tabular-nums')}>
+                        <td className={cn(td, 'text-right tabular-nums', o.cancelled && 'text-slate-400 line-through')}>
                           {clp(o.total)}
                           {o.shippingTotal ? <span className="block text-xs text-slate-400">envío {clp(o.shippingTotal)}</span> : null}
                         </td>
-                        <td className={td}>{o.inErp ? <Badge tone="green">Sí</Badge> : <Badge tone="amber">No</Badge>}</td>
+                        <td className={cn(td, 'border-l border-slate-100 whitespace-nowrap')} onClick={(e) => e.stopPropagation()}>
+                          <ReceiptCell o={o} />
+                        </td>
+                        <td className={cn(td, 'text-right whitespace-nowrap tabular-nums')}>
+                          {o.settlement ? (
+                            <>
+                              {clp(o.settlement.net)}
+                              {o.settlement.commission !== 0 && <span className="block text-xs text-slate-400">comisión {clp(o.settlement.commission)}</span>}
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400">{o.cancelled ? '—' : 'Pendiente'}</span>
+                          )}
+                        </td>
+                        <td className={cn(td, 'text-right whitespace-nowrap tabular-nums')}>
+                          {o.supplier ? (
+                            <>
+                              {clp(o.supplier.gross)}
+                              <span className="block text-xs text-slate-400">Fact. {o.supplier.documents.join(', ')}</span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-amber-600">{o.cancelled ? '—' : 'Falta factura'}</span>
+                          )}
+                        </td>
+                        <td className={cn(td, 'text-right tabular-nums')}>{o.cancelled ? '—' : clp(o.vat)}</td>
+                        <td className={cn(td, 'text-right font-semibold tabular-nums', o.result !== null && (o.result >= 0 ? 'text-emerald-600' : 'text-red-600'))}>
+                          {o.result !== null ? (
+                            <>
+                              {clp(o.result)}
+                              {o.marginPct !== null && <span className="block text-xs font-normal">{o.marginPct.toLocaleString('es-CL', { maximumFractionDigits: 1 })}%</span>}
+                            </>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
                       </tr>
                       {isOpen && (
                         <tr className="bg-slate-50/60">
                           <td />
-                          <td colSpan={8} className="px-3 pb-3">
+                          <td colSpan={12} className="px-3 pb-3">
                             <div className="grid gap-3 text-xs sm:grid-cols-3">
                               <div>
                                 <p className="font-semibold text-slate-600">Despacho</p>
@@ -221,6 +290,34 @@ export default function RetailApiSalesPage() {
         )}
       </section>
       {rawFor && <RawDialog id={rawFor} onClose={() => setRawFor(null)} />}
+    </div>
+  );
+}
+
+/** Boleta o factura de la orden (se emiten desde Ventas: aquí solo se muestran) */
+function ReceiptCell({ o }: { o: RetailApiOrder }) {
+  const r = o.receipt;
+  if (!r) return <span className="text-xs text-slate-400">{o.cancelled ? '—' : 'Sin boleta'}</span>;
+  const label = `${r.documentType === 33 ? 'Fact.' : 'N°'} ${r.number}`;
+  const tone =
+    r.status === 'EMITIDA' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : r.status === 'REGISTRADA' ? 'bg-slate-100 text-slate-700 ring-slate-200' : 'bg-amber-50 text-amber-700 ring-amber-200';
+  const badge = (
+    <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs font-medium ring-1', tone)}>
+      {r.status === 'BORRADOR' ? 'Factura borrador' : r.status === 'REVISAR' ? 'Revisar' : label}
+      {r.status === 'EMITIDA' && <FileText className="size-3" />}
+    </span>
+  );
+  return (
+    <div>
+      {r.status === 'EMITIDA' ? (
+        <a href={api.boletaPdfUrl(r.id, o.provider === 'WALMART' ? o.customerOrderId : o.orderNumber)} target="_blank" rel="noreferrer" title="Ver PDF">
+          {badge}
+        </a>
+      ) : (
+        badge
+      )}
+      <span className="mt-0.5 block text-xs text-slate-500 tabular-nums">{clp(r.totalGross)}</span>
+      {r.creditNotes > 0 && <span className="block text-xs text-red-600 tabular-nums">NC −{clp(r.creditNotes)}</span>}
     </div>
   );
 }

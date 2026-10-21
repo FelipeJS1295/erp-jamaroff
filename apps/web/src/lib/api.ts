@@ -884,6 +884,18 @@ export interface RetailApiOrder {
   /** La orden también está en Ventas (cargada por archivo) */
   inErp: boolean;
   syncedAt: string;
+  cancelled: boolean;
+  /** Boleta o factura de la orden (por N° de orden) */
+  receipt: { id: string; number: string; status: ReceiptStatus; documentType: number; totalGross: number; creditNotes: number } | null;
+  /** Liquidación del retailer: neto pagado, comisión (negativa) y cargos de envío/logística */
+  settlement: { net: number; commission: number; charges: number; paymentStatus: string | null; statement: string | null } | null;
+  /** Factura del proveedor asignada a la orden */
+  supplier: { net: number; gross: number; documents: string[] } | null;
+  /** IVA a pagar de la orden: venta − compra − cargos del retailer */
+  vat: number;
+  /** Liquidación − proveedor − IVA (null si falta liquidación o factura) */
+  result: number | null;
+  marginPct: number | null;
 }
 
 export interface RetailApiProduct {
