@@ -12,6 +12,9 @@ import {
   Percent,
   Undo2,
   Truck,
+  ShoppingCart,
+  Package,
+  PlugZap,
   Boxes,
   FileSpreadsheet,
   FileUp,
@@ -59,6 +62,15 @@ const sections: NavSection[] = [
       { label: 'Cargar archivos', href: '/ventas/cargas', icon: FileSpreadsheet, ready: true, edit: true },
       { label: 'Devoluciones', href: '/ventas/devoluciones', icon: Undo2, ready: true },
       { label: 'Guías de despacho', href: '/ventas/guias', icon: Truck, ready: true },
+    ],
+  },
+  {
+    // Sección aparte: ventas y productos traídos directo por API (no toca Ventas)
+    title: 'API Retail',
+    items: [
+      { label: 'Ventas', href: '/api-retail/ventas', icon: ShoppingCart, ready: true },
+      { label: 'Productos', href: '/api-retail/productos', icon: Package, ready: true },
+      { label: 'Conexión', href: '/api-retail/conexion', icon: PlugZap, ready: true },
     ],
   },
   {

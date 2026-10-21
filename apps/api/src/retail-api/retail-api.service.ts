@@ -1,0 +1,387 @@
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { eq, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { DRIZZLE, type Database } from '../database/database.module.js';
+import { retailApiConnections, retailApiOrderItems, retailApiOrders, retailApiProducts } from '../database/schema/index.js';
+import { PROVIDERS, providerByCode } from './providers/index.js';
+import { ProviderError, type NormalizedOrder, type NormalizedProduct, type ProviderConfig, type RetailProvider } from './providers/types.js';
+import { decryptSecrets, encryptSecrets, mask } from './secrets.js';
+
+export interface SyncJob {
+  id: string;
+  provider: string;
+  kind: 'orders' | 'products';
+  status: 'RUNNING' | 'DONE' | 'ERROR';
+  message: string;
+  count: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+const MAX_DAYS = 92;
+
+@Injectable()
+export class RetailApiService {
+  private readonly logger = new Logger(RetailApiService.name);
+  /** Sincronizaciones en curso o recientes (en memoria) */
+  private readonly jobs = new Map<string, SyncJob>();
+
+  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+
+  private provider(code: string): RetailProvider {
+    const p = providerByCode(code);
+    if (!p) throw new NotFoundException(`Retailer "${code}" no tiene conexión por API`);
+    return p;
+  }
+
+  private async row(code: string) {
+    const [r] = await this.db.select().from(retailApiConnections).where(eq(retailApiConnections.provider, code));
+    return r ?? null;
+  }
+
+  private async config(p: RetailProvider): Promise<ProviderConfig> {
+    const r = await this.row(p.code);
+    const saved = Object.entries((r?.settings ?? {}) as Record<string, string>).filter(([, v]) => v);
+    const settings = { ...Object.fromEntries(p.fields.filter((f) => f.default).map((f) => [f.key, f.default!])), ...Object.fromEntries(saved) };
+    return { settings, secrets: decryptSecrets(r?.secrets ?? null) };
+  }
+
+  // ------------------------------------------------------------------ Conexiones
+
+  async connections() {
+    const rows = await this.db.select().from(retailApiConnections);
+    return PROVIDERS.map((p) => {
+      const r = rows.find((x) => x.provider === p.code);
+      const settings = (r?.settings ?? {}) as Record<string, string>;
+      const secrets = decryptSecrets(r?.secrets ?? null);
+      return {
+        provider: p.code,
+        label: p.label,
+        howTo: p.howTo,
+        docsUrl: p.docsUrl,
+        fields: p.fields,
+        enabled: r?.enabled ?? false,
+        configured: p.fields.filter((f) => f.required).every((f) => (f.secret ? secrets[f.key] : settings[f.key])),
+        settings: Object.fromEntries(p.fields.filter((f) => !f.secret).map((f) => [f.key, settings[f.key] ?? f.default ?? ''])),
+        // Las claves nunca vuelven completas: solo los últimos 4 caracteres
+        secrets: Object.fromEntries(p.fields.filter((f) => f.secret).map((f) => [f.key, mask(secrets[f.key])])),
+        status: r?.status ?? 'SIN_PROBAR',
+        lastError: r?.lastError ?? null,
+        lastTestAt: r?.lastTestAt?.toISOString() ?? null,
+        lastOrdersSyncAt: r?.lastOrdersSyncAt?.toISOString() ?? null,
+        lastProductsSyncAt: r?.lastProductsSyncAt?.toISOString() ?? null,
+      };
+    });
+  }
+
+  /** Guarda la conexión. Las claves vacías no se tocan (se mantiene la guardada) */
+  async save(code: string, input: { enabled: boolean; settings: Record<string, string>; secrets: Record<string, string> }) {
+    const p = this.provider(code);
+    const current = await this.row(p.code);
+    const settings: Record<string, string> = {};
+    for (const f of p.fields.filter((x) => !x.secret)) settings[f.key] = (input.settings[f.key] ?? '').trim();
+    const secrets = decryptSecrets(current?.secrets ?? null);
+    for (const f of p.fields.filter((x) => x.secret)) {
+      const v = (input.secrets[f.key] ?? '').trim();
+      if (v) secrets[f.key] = v;
+    }
+    const values = { enabled: input.enabled, settings, secrets: encryptSecrets(secrets), status: 'SIN_PROBAR', lastError: null };
+    await this.db
+      .insert(retailApiConnections)
+      .values({ provider: p.code, ...values })
+      .onConflictDoUpdate({ target: retailApiConnections.provider, set: values });
+    return { ok: true };
+  }
+
+  async test(code: string) {
+    const p = this.provider(code);
+    const cfg = await this.config(p);
+    try {
+      const r = await p.test(cfg);
+      await this.setStatus(p.code, 'OK', null, { lastTestAt: new Date() });
+      return { ok: true, message: r.message, sample: truncate(r.sample) };
+    } catch (err) {
+      const message = errMessage(err);
+      await this.setStatus(p.code, 'ERROR', message, { lastTestAt: new Date() });
+      return { ok: false, message, sample: err instanceof ProviderError && err.body ? err.body : null };
+    }
+  }
+
+  private async setStatus(code: string, status: string, lastError: string | null, extra: Partial<typeof retailApiConnections.$inferInsert> = {}) {
+    await this.db
+      .insert(retailApiConnections)
+      .values({ provider: code, enabled: true, status, lastError, ...extra })
+      .onConflictDoUpdate({ target: retailApiConnections.provider, set: { status, lastError, ...extra } });
+  }
+
+  // ------------------------------------------------------------------ Sincronizar
+
+  job(id: string) {
+    const j = this.jobs.get(id);
+    if (!j) throw new NotFoundException('La sincronización ya no existe (¿se reinició la API?)');
+    return j;
+  }
+
+  /** Corre en segundo plano: el navegador consulta el avance con job(id) */
+  startOrders(code: string, from: string, to: string) {
+    const p = this.provider(code);
+    if (from > to) throw new BadRequestException('La fecha "desde" es posterior a "hasta"');
+    if ((Date.parse(to) - Date.parse(from)) / 86400000 > MAX_DAYS) throw new BadRequestException(`Máximo ${MAX_DAYS} días por sincronización`);
+    return this.run(p, 'orders', async (job) => {
+      const cfg = await this.config(p);
+      const orders = await p.orders(cfg, from, to, (m) => (job.message = m));
+      job.message = `Guardando ${orders.length} órdenes…`;
+      await this.saveOrders(p.code, orders);
+      await this.setStatus(p.code, 'OK', null, { lastOrdersSyncAt: new Date() });
+      return { count: orders.length, message: `${orders.length} órdenes de ${p.label} sincronizadas (${from} a ${to})` };
+    });
+  }
+
+  startProducts(code: string) {
+    const p = this.provider(code);
+    return this.run(p, 'products', async (job) => {
+      const cfg = await this.config(p);
+      const products = await p.products(cfg, (m) => (job.message = m));
+      job.message = `Guardando ${products.length} productos…`;
+      await this.saveProducts(p.code, products);
+      await this.setStatus(p.code, 'OK', null, { lastProductsSyncAt: new Date() });
+      return { count: products.length, message: `${products.length} productos de ${p.label} sincronizados` };
+    });
+  }
+
+  private run(p: RetailProvider, kind: SyncJob['kind'], work: (job: SyncJob) => Promise<{ count: number; message: string }>) {
+    const running = [...this.jobs.values()].find((j) => j.provider === p.code && j.kind === kind && j.status === 'RUNNING');
+    if (running) return running;
+    const job: SyncJob = { id: randomUUID(), provider: p.code, kind, status: 'RUNNING', message: 'Conectando…', count: 0, startedAt: new Date().toISOString(), finishedAt: null };
+    this.jobs.set(job.id, job);
+    work(job)
+      .then((r) => Object.assign(job, { status: 'DONE', count: r.count, message: r.message }))
+      .catch(async (err) => {
+        const message = errMessage(err);
+        this.logger.warn(`${p.code} ${kind}: ${message}`);
+        Object.assign(job, { status: 'ERROR', message });
+        await this.setStatus(p.code, 'ERROR', message).catch(() => undefined);
+      })
+      .finally(() => {
+        job.finishedAt = new Date().toISOString();
+        // Se olvidan después de una hora
+        setTimeout(() => this.jobs.delete(job.id), 3600000).unref();
+      });
+    return job;
+  }
+
+  private async saveOrders(provider: string, orders: NormalizedOrder[]) {
+    for (const o of orders) {
+      await this.db.transaction(async (tx) => {
+        const values = {
+          provider,
+          externalId: o.externalId,
+          orderNumber: cut(o.orderNumber, 80),
+          customerOrderId: cut(o.customerOrderId, 80),
+          orderDate: o.orderDate,
+          status: cut(o.status, 60),
+          customerName: cut(o.customerName, 200),
+          customerRut: cut(o.customerRut, 20),
+          customerEmail: cut(o.customerEmail, 200),
+          address: cut(o.address, 300),
+          commune: cut(o.commune, 120),
+          region: cut(o.region, 120),
+          total: money(o.total),
+          shippingTotal: money(o.shippingTotal),
+          itemsCount: o.items.length,
+          raw: o.raw,
+          syncedAt: new Date(),
+        };
+        const [row] = await tx
+          .insert(retailApiOrders)
+          .values(values)
+          .onConflictDoUpdate({ target: [retailApiOrders.provider, retailApiOrders.externalId], set: values })
+          .returning({ id: retailApiOrders.id });
+        await tx.delete(retailApiOrderItems).where(eq(retailApiOrderItems.orderId, row.id));
+        if (o.items.length) {
+          // Si el retailer repite el id de línea, se le agrega un sufijo para no chocar
+          const seen = new Map<string, number>();
+          await tx.insert(retailApiOrderItems).values(
+            o.items.map((i) => {
+              const n = (seen.get(i.externalItemId) ?? 0) + 1;
+              seen.set(i.externalItemId, n);
+              return {
+                orderId: row.id,
+                externalItemId: cut(n > 1 ? `${i.externalItemId}#${n}` : i.externalItemId, 80)!,
+                sellerSku: cut(i.sellerSku, 120),
+                retailerSku: cut(i.retailerSku, 120),
+                name: cut(i.name, 300),
+                quantity: String(i.quantity || 1),
+                unitPrice: money(i.unitPrice),
+                paidPrice: money(i.paidPrice),
+                shippingAmount: money(i.shippingAmount),
+                status: cut(i.status, 60),
+                raw: i.raw,
+              };
+            }),
+          );
+        }
+      });
+    }
+  }
+
+  private async saveProducts(provider: string, products: NormalizedProduct[]) {
+    const unique = new Map(products.map((p) => [p.sellerSku, p]));
+    for (const p of unique.values()) {
+      const values = {
+        provider,
+        sellerSku: cut(p.sellerSku, 120)!,
+        retailerSku: cut(p.retailerSku, 120),
+        name: cut(p.name, 300),
+        brand: cut(p.brand, 120),
+        price: money(p.price),
+        salePrice: money(p.salePrice),
+        stock: p.stock === null ? null : Math.round(p.stock),
+        status: cut(p.status, 60),
+        url: cut(p.url, 500),
+        imageUrl: cut(p.imageUrl, 500),
+        raw: p.raw,
+        syncedAt: new Date(),
+      };
+      await this.db
+        .insert(retailApiProducts)
+        .values(values)
+        .onConflictDoUpdate({ target: [retailApiProducts.provider, retailApiProducts.sellerSku], set: values });
+    }
+  }
+
+  // ------------------------------------------------------------------ Consultas
+
+  /** Órdenes traídas por API, con sus productos y si ya están en Ventas (cargadas por archivo) */
+  async orders(from: string, to: string, provider?: string) {
+    const { rows } = await this.db.execute<{
+      id: string;
+      provider: string;
+      external_id: string;
+      order_number: string | null;
+      customer_order_id: string | null;
+      order_date: string | null;
+      status: string | null;
+      customer_name: string | null;
+      customer_rut: string | null;
+      customer_email: string | null;
+      address: string | null;
+      commune: string | null;
+      region: string | null;
+      total: number | null;
+      shipping_total: number | null;
+      synced_at: string;
+      items: { sellerSku: string | null; name: string | null; quantity: number; paidPrice: number | null; status: string | null }[] | null;
+      in_erp: boolean;
+    }>(sql`
+      select o.id, o.provider, o.external_id, o.order_number, o.customer_order_id,
+        to_char(o.order_date at time zone 'America/Santiago', 'YYYY-MM-DD HH24:MI') as order_date,
+        o.status, o.customer_name, o.customer_rut, o.customer_email, o.address, o.commune, o.region,
+        o.total::float8 as total, o.shipping_total::float8 as shipping_total, o.synced_at::text,
+        (select json_agg(json_build_object('sellerSku', i.seller_sku, 'name', i.name, 'quantity', i.quantity::float8,
+            'paidPrice', i.paid_price::float8, 'status', i.status) order by i.external_item_id)
+          from retail_api_order_items i where i.order_id = o.id) as items,
+        exists (
+          select 1 from sales_records s join retailers r on r.id = s.retailer_id
+          where r.code = o.provider
+            and (s.order_number in (o.order_number, o.customer_order_id) or s.order_id in (o.order_number, o.customer_order_id))
+        ) as in_erp
+      from retail_api_orders o
+      where (o.order_date at time zone 'America/Santiago')::date between ${from}::date and ${to}::date
+        ${provider ? sql`and o.provider = ${provider.toUpperCase()}` : sql``}
+      order by o.order_date desc nulls last
+      limit 5000
+    `);
+    return rows.map((r) => ({
+      id: r.id,
+      provider: r.provider,
+      retailer: providerByCode(r.provider)?.label ?? r.provider,
+      externalId: r.external_id,
+      orderNumber: r.order_number,
+      customerOrderId: r.customer_order_id,
+      orderDate: r.order_date,
+      status: r.status,
+      customerName: r.customer_name,
+      customerRut: r.customer_rut,
+      customerEmail: r.customer_email,
+      address: r.address,
+      commune: r.commune,
+      region: r.region,
+      total: r.total,
+      shippingTotal: r.shipping_total,
+      items: r.items ?? [],
+      inErp: r.in_erp,
+      syncedAt: r.synced_at,
+    }));
+  }
+
+  /** Respuesta completa del retailer para una orden (para revisar campos) */
+  async orderRaw(id: string) {
+    const [o] = await this.db.select({ raw: retailApiOrders.raw }).from(retailApiOrders).where(eq(retailApiOrders.id, id));
+    if (!o) throw new NotFoundException('La orden no existe');
+    return o.raw;
+  }
+
+  /** Productos traídos por API y si están en el Catálogo retail del ERP */
+  async products(provider?: string) {
+    const { rows } = await this.db.execute<{
+      id: string;
+      provider: string;
+      seller_sku: string;
+      retailer_sku: string | null;
+      name: string | null;
+      brand: string | null;
+      price: number | null;
+      sale_price: number | null;
+      stock: number | null;
+      status: string | null;
+      url: string | null;
+      image_url: string | null;
+      synced_at: string;
+      catalog_name: string | null;
+      master_sku: string | null;
+    }>(sql`
+      select p.id, p.provider, p.seller_sku, p.retailer_sku, p.name, p.brand, p.price::float8 as price,
+        p.sale_price::float8 as sale_price, p.stock, p.status, p.url, p.image_url, p.synced_at::text,
+        c.name as catalog_name, m.sku_master as master_sku
+      from retail_api_products p
+      left join lateral (
+        select rp.name, rp.product_id from retailer_products rp join retailers r on r.id = rp.retailer_id
+        where r.code = p.provider and (rp.seller_sku = p.seller_sku or rp.retailer_sku in (p.seller_sku, p.retailer_sku))
+        limit 1
+      ) c on true
+      left join products m on m.id = c.product_id
+      ${provider ? sql`where p.provider = ${provider.toUpperCase()}` : sql``}
+      order by p.provider, p.name
+      limit 20000
+    `);
+    return rows.map((r) => ({
+      id: r.id,
+      provider: r.provider,
+      retailer: providerByCode(r.provider)?.label ?? r.provider,
+      sellerSku: r.seller_sku,
+      retailerSku: r.retailer_sku,
+      name: r.name,
+      brand: r.brand,
+      price: r.price,
+      salePrice: r.sale_price,
+      stock: r.stock,
+      status: r.status,
+      url: r.url,
+      imageUrl: r.image_url,
+      syncedAt: r.synced_at,
+      inCatalog: r.catalog_name !== null,
+      masterSku: r.master_sku,
+    }));
+  }
+}
+
+const cut = (v: string | null | undefined, max: number) => (v === null || v === undefined ? null : String(v).slice(0, max));
+const money = (v: number | null | undefined) => (v === null || v === undefined || !Number.isFinite(v) ? null : String(Math.round(v * 100) / 100));
+const errMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/** Muestra recortada de una respuesta (para no mandar megas al navegador) */
+function truncate(v: unknown) {
+  const s = JSON.stringify(v ?? null, null, 2);
+  return s.length > 6000 ? `${s.slice(0, 6000)}\n…` : s;
+}

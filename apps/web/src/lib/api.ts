@@ -829,6 +829,82 @@ export interface DispatchGuide {
 
 export type GuideInput = Omit<DispatchGuide, 'id' | 'transferLabel' | 'totalGross' | 'status' | 'draftCode' | 'folio' | 'issuedAt' | 'hasPdf'>;
 
+// ---------------------------------------------------------------- API Retail
+
+export type RetailProviderCode = 'FALABELLA' | 'CENCOSUD' | 'WALMART';
+
+export interface RetailApiConnection {
+  provider: RetailProviderCode;
+  label: string;
+  howTo: string;
+  docsUrl: string;
+  fields: { key: string; label: string; secret?: boolean; required?: boolean; placeholder?: string; help?: string; default?: string }[];
+  enabled: boolean;
+  configured: boolean;
+  settings: Record<string, string>;
+  /** Solo los últimos 4 caracteres ("••••abcd") o null si no está guardada */
+  secrets: Record<string, string | null>;
+  status: 'SIN_PROBAR' | 'OK' | 'ERROR';
+  lastError: string | null;
+  lastTestAt: string | null;
+  lastOrdersSyncAt: string | null;
+  lastProductsSyncAt: string | null;
+}
+
+export interface RetailSyncJob {
+  id: string;
+  provider: RetailProviderCode;
+  kind: 'orders' | 'products';
+  status: 'RUNNING' | 'DONE' | 'ERROR';
+  message: string;
+  count: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface RetailApiOrder {
+  id: string;
+  provider: RetailProviderCode;
+  retailer: string;
+  externalId: string;
+  orderNumber: string | null;
+  customerOrderId: string | null;
+  /** "AAAA-MM-DD HH:MM" hora de Chile */
+  orderDate: string | null;
+  status: string | null;
+  customerName: string | null;
+  customerRut: string | null;
+  customerEmail: string | null;
+  address: string | null;
+  commune: string | null;
+  region: string | null;
+  total: number | null;
+  shippingTotal: number | null;
+  items: { sellerSku: string | null; name: string | null; quantity: number; paidPrice: number | null; status: string | null }[];
+  /** La orden también está en Ventas (cargada por archivo) */
+  inErp: boolean;
+  syncedAt: string;
+}
+
+export interface RetailApiProduct {
+  id: string;
+  provider: RetailProviderCode;
+  retailer: string;
+  sellerSku: string;
+  retailerSku: string | null;
+  name: string | null;
+  brand: string | null;
+  price: number | null;
+  salePrice: number | null;
+  stock: number | null;
+  status: string | null;
+  url: string | null;
+  imageUrl: string | null;
+  syncedAt: string;
+  inCatalog: boolean;
+  masterSku: string | null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -911,6 +987,21 @@ export const api = {
   vatMonths: (months = 12) => request<VatMonth[]>(`/vat?months=${months}`),
   vatDetail: (month: string) => request<VatDocument[]>(`/vat/${month}`),
   vatCsvUrl: (month: string) => `${API_URL}/vat/${month}/csv`,
+
+  // API Retail
+  retailConnections: () => request<RetailApiConnection[]>('/retail-api/connections'),
+  saveRetailConnection: (provider: RetailProviderCode, data: { enabled: boolean; settings: Record<string, string>; secrets: Record<string, string> }) =>
+    request<{ ok: boolean }>(`/retail-api/connections/${provider}`, { method: 'PUT', body: JSON.stringify(data) }),
+  testRetailConnection: (provider: RetailProviderCode) =>
+    request<{ ok: boolean; message: string; sample: string | null }>(`/retail-api/connections/${provider}/test`, { method: 'POST' }),
+  syncRetailOrders: (provider: RetailProviderCode, from: string, to: string) =>
+    request<RetailSyncJob>(`/retail-api/${provider}/orders/sync`, { method: 'POST', body: JSON.stringify({ from, to }) }),
+  syncRetailProducts: (provider: RetailProviderCode) => request<RetailSyncJob>(`/retail-api/${provider}/products/sync`, { method: 'POST' }),
+  retailJob: (id: string) => request<RetailSyncJob>(`/retail-api/jobs/${id}`),
+  retailOrders: (from: string, to: string, provider?: string) =>
+    request<RetailApiOrder[]>(`/retail-api/orders?from=${from}&to=${to}${provider ? `&provider=${provider}` : ''}`),
+  retailOrderRaw: (id: string) => request<unknown>(`/retail-api/orders/${id}/raw`),
+  retailProducts: (provider?: string) => request<RetailApiProduct[]>(`/retail-api/products${provider ? `?provider=${provider}` : ''}`),
 
   // Portal MIPYME
   mipymeSync: () => request<MipymeSyncResult>('/sii/mipyme/sincronizar', { method: 'POST' }),

@@ -11,6 +11,7 @@ import { SettlementsModule } from './settlements/settlements.module.js';
 import { SiiModule } from './sii/sii.module.js';
 import { AccountingModule } from './accounting/accounting.module.js';
 import { RetailersModule } from './retailers/retailers.module.js';
+import { RetailApiModule } from './retail-api/retail-api.module.js';
 import { ReturnsModule } from './returns/returns.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { PurchasesModule } from './purchases/purchases.module.js';
@@ -35,7 +36,7 @@ import { PurchasesModule } from './purchases/purchases.module.js';
     SiiModule,
     AccountingModule,
     RetailersModule,
-    ReturnsModule,
+    ReturnsModule, RetailApiModule,
     CatalogModule,
   ],
 })

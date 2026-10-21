@@ -127,6 +127,13 @@
       "when": 1792526856534,
       "tag": "0017_mipyme",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792614011058,
+      "tag": "0018_api_retail",
+      "breakpoints": true
     }
   ]
 }
